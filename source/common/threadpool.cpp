@@ -600,7 +600,7 @@ ThreadPool* ThreadPool::allocThreadPools(x265_param* p, int& numPools, bool isTh
             if (isThreadsReserved)
             {
                 numThreads = p->lookaheadThreads;
-                if (p->bEnableEncoderRowME)
+                if (p->bEnableEncoderRowME > -1)
                     numThreads = MAX_ROW_ME_JOB;
                 maxProviders = 1;
             }

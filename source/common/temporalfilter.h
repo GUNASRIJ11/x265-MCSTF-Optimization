@@ -212,9 +212,13 @@ namespace X265_NS {
 
         struct Estimate
         {
-            int p0, b, p1;
-            int blockRow;
-            Frame* frame;
+            int  p0, b, p1;
+            Frame *frame = NULL;
+            bool   bRowMode;
+            int    blockRow;
+            int    MElevel;
+            volatile int    atomicBlockX;
+            volatile int*   prevAtomicBlockX;
         };
 
         enum { MAX_BATCH_SIZE = 512 };
@@ -242,17 +246,18 @@ namespace X265_NS {
             m_workersInside.set(0);
         }
 
-        void add_row(int refIdx, int poc, int curPoc,
-            Frame* pic, int blockRow);
+        void add(int p0, int p1, int b, Frame* pic);
+        void add_row(int refIdx, int poc, int curPoc, Frame* pic, int blockRow, int level);
+        void initRowSync(int numRefs, int numBlockRows, int mctfUnitSize);
 
         void processTasks(int workerThreadId);
 
         void finishBatch();
 
-        void initRowSync(int numRef,
-            int numBlockRows,
-            int blockSize);
-        void estimatelowresmotion_doubleres(MotionEstimatorTLD& m_metld, Frame* curframe, int refId, int blockRow);
+        void    estimatelowresmotion(MotionEstimatorTLD& m_metld, Frame* curframe, int refId, int rowMELevel);
+        void    motionestimation_doubleres_row(MotionEstimatorTLD& m_metld, Frame* curframe, int refId, int row, volatile int& atomicBlockX, volatile int* prevAtomicBlockX);
+        void    motionestimation_luma_row(MotionEstimatorTLD& metld, MV* mvs, uint32_t mvStride, pixel* src, int stride, int height, int width, pixel* buf, int bs, int sRange,
+                int row,volatile int& atomicBlockX, volatile int* prevAtomicBlockX, MV* previous = 0, uint32_t prevmvStride = 0, int factor = 1);
 
     };
 
@@ -311,7 +316,7 @@ namespace X265_NS {
         void applyMotion(MV * mvs, uint32_t mvsStride, PicYuv * input, PicYuv * output, const int blockRow = 0, const int rowSize = 0);
         //void applyMotionBlock(const pixel *pSrc, const int srcStride, pixel *dst, const intptr_t dstStride, const int w, const int h, const int *xFilter, const int *yFilter);
         void    create(x265_param* param, ThreadPool*);
-        void runMCSTF(Frame* pic, ThreadPool*);
+        void runMCSTFME(Frame* pic, int rowMELevels, ThreadPool*);
         void    destroy();
     };
 
@@ -356,6 +361,7 @@ namespace X265_NS {
 
         void finishBatch()
         {
+            m_tasksAllocated.set(0);
             if (m_pool)
                 tryBondPeers(*m_pool, m_jobTotal);
             processTasks(-1);
@@ -365,7 +371,6 @@ namespace X265_NS {
 
         void processTasks(int /*workerThreadID*/) override
         {
-            m_tasksAllocated.set(0);
             int i = m_tasksAllocated.getIncr(1);
 
             while (i < m_jobTotal)

@@ -274,7 +274,7 @@ void Encoder::create()
     if (allowPools)
     {
         m_threadPool = ThreadPool::allocThreadPools(p, m_numPools, 0);
-        if (p->bEnableTemporalFilter && p->bEnableEncoderRowME)
+        if (p->bEnableTemporalFilter && p->bEnableEncoderRowME > -1)
         {
             m_MCSTFthreadPool = ThreadPool::allocThreadPools(p, m_numPools, 1);
         }
@@ -342,7 +342,7 @@ void Encoder::create()
     {
         // First threadpool belongs to ThreadedME, if the feature is enabled
 
-        if (p->bEnableTemporalFilter && p->bEnableEncoderRowME)
+        if (p->bEnableTemporalFilter && p->bEnableEncoderRowME > -1)
         {
             m_mcstf = new TemporalFilter;
             m_mcstf->create(m_param, m_MCSTFthreadPool);
@@ -1000,7 +1000,7 @@ void Encoder::destroy()
     // thread pools can be cleaned up now that all the JobProviders are
     // known to be shutdown
     delete [] m_threadPool;
-    if (m_param->bEnableTemporalFilter && m_param->bEnableEncoderRowME)
+    if (m_param->bEnableTemporalFilter && m_param->bEnableEncoderRowME > -1)
     {
         delete[] m_MCSTFthreadPool;
     }
@@ -2566,8 +2566,8 @@ int Encoder::encode(const x265_picture* pic_in, x265_picture* pic_out)
             // Generate MCSTF References and perform HME
             if (m_param->bEnableTemporalFilter && isFilterThisframe(frameEnc[0]->m_mcstf->m_sliceTypeConfig, frameEnc[0]->m_lowres.sliceType))
             {
-                if (m_param->bEnableEncoderRowME)
-                    m_mcstf->runMCSTF(frameEnc[0], m_MCSTFthreadPool);
+                if (m_param->bEnableLookaheadRowME == -1)
+                    m_mcstf->runMCSTFME(frameEnc[0], m_param->bEnableEncoderRowME, m_MCSTFthreadPool);
 
                 for (int i = 0; i < frameEnc[0]->m_mcstf->m_numRef; i++)
                 {
