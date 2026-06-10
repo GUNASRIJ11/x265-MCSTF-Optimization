@@ -276,7 +276,7 @@ void Encoder::create()
         m_threadPool = ThreadPool::allocThreadPools(p, m_numPools, 0);
         if (p->bEnableTemporalFilter && p->bEnableEncoderRowME > -1)
         {
-            m_MCSTFthreadPool = ThreadPool::allocThreadPools(p, m_numPools, 1);
+            m_MCSTFthreadPool = ThreadPool::allocThreadPools(p, m_numPools, 0);
         }
         //m_threadPool = ThreadPool::allocThreadPools(p, m_numPools, 0);
     }
@@ -352,7 +352,6 @@ void Encoder::create()
 
             m_MCSTFthreadPool[0].m_jpTable[0] = m_mcstf;
             m_MCSTFthreadPool[0].m_numProviders = 1;
-            m_MCSTFthreadPool[0].start();
             //init(param);
         }
         if (p->bThreadedME)
@@ -2567,7 +2566,11 @@ int Encoder::encode(const x265_picture* pic_in, x265_picture* pic_out)
             if (m_param->bEnableTemporalFilter && isFilterThisframe(frameEnc[0]->m_mcstf->m_sliceTypeConfig, frameEnc[0]->m_lowres.sliceType))
             {
                 if (m_param->bEnableLookaheadRowME == -1)
+                {
+                    //m_MCSTFthreadPool->start();
                     m_mcstf->runMCSTFME(frameEnc[0], m_param->bEnableEncoderRowME, m_MCSTFthreadPool);
+
+                }
 
                 for (int i = 0; i < frameEnc[0]->m_mcstf->m_numRef; i++)
                 {

@@ -684,8 +684,8 @@ void MCSTFMEGroup::processTasks(int workerThreadId)
     {
         Estimate& e = m_estimates[task];
 
-        //printf("this =%p MCSTF worker %d processing task %d\n",this,
-            //workerThreadId, task);
+        printf("this =%p numworkers %d MCSTF worker %d processing task %d\n",this, m_pool->m_numWorkers,
+            workerThreadId, task);
 
         if (!e.bRowMode)
         {
@@ -1164,6 +1164,7 @@ void MCSTFMEGroup::add_row(int refIdx, int poc, int curPoc,
 
 void MCSTFMEGroup::finishBatch()
 {
+    m_pool->start();
     m_tasksAllocated.set(0);
     m_tasksCompleted.set(0);
     m_activeWorkers.set(0);
@@ -1196,6 +1197,7 @@ void MCSTFMEGroup::finishBatch()
     m_mcstf.m_activeGroup = NULL;
     //printf("finishBatch mcstf=%p\n", &m_mcstf);
     m_mcstf.m_helpWanted = false;
+    m_pool->stopWorkers();
 }
 
 void TemporalFilter::applyMotion(MV *mvs, uint32_t mvsStride, PicYuv *input, PicYuv *output, const int blockRow, const int rowSize)
