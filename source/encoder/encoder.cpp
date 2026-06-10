@@ -346,12 +346,12 @@ void Encoder::create()
         {
             m_mcstf = new TemporalFilter;
             m_mcstf->create(m_param, m_MCSTFthreadPool);
-            m_mcstf->m_pool = &m_MCSTFthreadPool[1];
+            m_mcstf->m_pool = &m_MCSTFthreadPool[0];
 
             m_mcstf->m_jpId = 0;
 
-            m_MCSTFthreadPool[1].m_jpTable[0] = m_mcstf;
-            m_MCSTFthreadPool[1].m_numProviders = 1;
+            m_MCSTFthreadPool[0].m_jpTable[0] = m_mcstf;
+            m_MCSTFthreadPool[0].m_numProviders = 1;
             //init(param);
         }
         if (p->bThreadedME)
@@ -368,7 +368,7 @@ void Encoder::create()
         for (int i = 0; i < m_param->frameNumThreads; i++)
         {
             // Since first pool belongs to ThreadedME
-            int pool = 0;// static_cast<int>(p->bThreadedME) + i % numFrameThreadPools;
+            int pool = static_cast<int>(p->bThreadedME) + i % numFrameThreadPools;
             m_frameEncoder[i]->m_pool = &m_threadPool[pool];
             m_frameEncoder[i]->m_jpId = m_threadPool[pool].m_numProviders++;
             m_threadPool[pool].m_jpTable[m_frameEncoder[i]->m_jpId] = m_frameEncoder[i];
