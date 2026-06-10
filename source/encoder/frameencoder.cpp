@@ -664,7 +664,7 @@ void FrameEncoder::compressFrame(int layer)
     {
         m_frame[layer]->m_mcstf->m_QP = qp;
         if (m_param->bEnableBilateralRowME)
-            m_frame[layer]->m_mcstf->bilateralFilter(m_frame[layer], m_frame[layer]->m_mcstfRefList, m_param->temporalFilterStrength, m_pool);
+            m_frame[layer]->m_mcstf->bilateralFilter(m_frame[layer], m_frame[layer]->m_mcstfRefList, m_param->temporalFilterStrength, m_top->m_threadPool);
         else
             m_frame[layer]->m_mcstf->bilateralFilter_core(m_frame[layer], m_frame[layer]->m_mcstfRefList, m_param->temporalFilterStrength);
     }

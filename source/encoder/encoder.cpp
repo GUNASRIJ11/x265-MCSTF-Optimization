@@ -274,10 +274,10 @@ void Encoder::create()
     if (allowPools)
     {
         m_threadPool = ThreadPool::allocThreadPools(p, m_numPools, 0);
-        if (p->bEnableTemporalFilter && p->bEnableEncoderRowME > -1)
-        {
-            m_MCSTFthreadPool = ThreadPool::allocThreadPools(p, m_numPools, 0);
-        }
+        //if (p->bEnableTemporalFilter && p->bEnableEncoderRowME > -1)
+        //{
+        //    m_MCSTFthreadPool = ThreadPool::allocThreadPools(p, m_numPools, 0);
+        //}
         //m_threadPool = ThreadPool::allocThreadPools(p, m_numPools, 0);
     }
     else
@@ -345,13 +345,13 @@ void Encoder::create()
         if (p->bEnableTemporalFilter && p->bEnableEncoderRowME > -1)
         {
             m_mcstf = new TemporalFilter;
-            m_mcstf->create(m_param, m_MCSTFthreadPool);
-            m_mcstf->m_pool = &m_MCSTFthreadPool[0];
+            m_mcstf->create(m_param, &m_threadPool[0]);
+            m_mcstf->m_pool = &m_threadPool[0];
 
             m_mcstf->m_jpId = 0;
 
-            m_MCSTFthreadPool[0].m_jpTable[0] = m_mcstf;
-            m_MCSTFthreadPool[0].m_numProviders = 1;
+            m_threadPool[0].m_jpTable[0] = m_mcstf;
+            m_threadPool[0].m_numProviders = 1;
             //init(param);
         }
         if (p->bThreadedME)
@@ -363,12 +363,12 @@ void Encoder::create()
             m_threadPool[0].m_jpTable[m_threadedME->m_jpId] = m_threadedME;
         }
 
-        int numFrameThreadPools = (!m_param->bThreadedME) ? m_numPools : m_numPools - 1;
+        int numFrameThreadPools = (!(m_param->bThreadedME || m_param->bEnableTemporalFilter)) ? m_numPools : m_numPools - 1;
 
         for (int i = 0; i < m_param->frameNumThreads; i++)
         {
             // Since first pool belongs to ThreadedME
-            int pool = static_cast<int>(p->bThreadedME) + i % numFrameThreadPools;
+            int pool = static_cast<int>(p->bThreadedME || m_param->bEnableTemporalFilter) + i % numFrameThreadPools;
             m_frameEncoder[i]->m_pool = &m_threadPool[pool];
             m_frameEncoder[i]->m_jpId = m_threadPool[pool].m_numProviders++;
             m_threadPool[pool].m_jpTable[m_frameEncoder[i]->m_jpId] = m_frameEncoder[i];
@@ -404,7 +404,7 @@ void Encoder::create()
         lookAheadThreadPool = ThreadPool::allocThreadPools(p, pools, 1);
     }
     else
-        lookAheadThreadPool = (!m_param->bThreadedME) ? m_threadPool : &m_threadPool[1];
+        lookAheadThreadPool = (!(m_param->bThreadedME || m_param->bEnableTemporalFilter)) ? m_threadPool : &m_threadPool[1];
     m_lookahead = new Lookahead(m_param, lookAheadThreadPool);
     if (pools)
     {
@@ -678,8 +678,8 @@ void Encoder::stopJobs()
             m_threadPool[i].stopWorkers();
     }
 
-    if (m_MCSTFthreadPool)
-        m_MCSTFthreadPool->stopWorkers();
+    //if (m_MCSTFthreadPool)
+    //    m_MCSTFthreadPool->stopWorkers();
 }
 
 int Encoder::copySlicetypePocAndSceneCut(int *slicetype, int *poc, int *sceneCut, int sLayer)
@@ -2568,7 +2568,7 @@ int Encoder::encode(const x265_picture* pic_in, x265_picture* pic_out)
                 if (m_param->bEnableLookaheadRowME == -1)
                 {
                     //m_MCSTFthreadPool->start();
-                    m_mcstf->runMCSTFME(frameEnc[0], m_param->bEnableEncoderRowME, m_MCSTFthreadPool);
+                    m_mcstf->runMCSTFME(frameEnc[0], m_param->bEnableEncoderRowME, m_mcstf->m_pool);
 
                 }
 

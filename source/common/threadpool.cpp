@@ -257,6 +257,135 @@ int ThreadPool::tryBondPeers(int maxPeers, sleepbitmap_t peerBitmap, BondedTaskG
     return bondCount;
 }
 
+
+/* Distributes totalNumThreads between ThreadedME and FrameEncoder pools.
+ * Modifies threadsPerPool[], nodeMaskPerPool[], numNumaNodes, and numPools in-place.
+ * Returns the number of threads reserved for frame encoding. */
+static void distributeThreadsForMCSTF(
+    x265_param* p,
+    int totalNumThreads,
+    int& numNumaNodes,
+    bool bNumaSupport,
+    int* threadsPerPool,
+    uint64_t* nodeMaskPerPool,
+    int& numPools,
+    int& threadsFrameEnc)
+{
+    //if (totalNumThreads < MIN_TME_THREADS)
+    //{
+    //    x265_log(p, X265_LOG_WARNING, "Low thread count detected, disabling --threaded-me."
+    //        " Minimum recommended is 32 cores / threads\n");
+    //    p->bThreadedME = 0;
+    //    return;
+    //}
+
+    int targetTME = 48;
+    targetTME = (targetTME < 1) ? 1 : targetTME;
+
+    threadsFrameEnc = totalNumThreads - targetTME;
+    int defaultNumFT = ThreadPool::getFrameThreadsCount(p, totalNumThreads);
+    if (threadsFrameEnc < defaultNumFT)
+    {
+        threadsFrameEnc = defaultNumFT;
+        targetTME = totalNumThreads - threadsFrameEnc;
+    }
+
+#if defined(_WIN32_WINNT) && _WIN32_WINNT >= _WIN32_WINNT_WIN7 || HAVE_LIBNUMA
+    if (bNumaSupport && numNumaNodes > 1)
+    {
+        int tmeNumaNodes = 0;
+        int leftover = 0;
+
+        // First thread pool belongs to ThreadedME
+        std::vector<int> threads(1, 0);
+        std::vector<uint64_t> nodeMasks(1, 0);
+        int poolIndex = 0;
+
+        /* Greedily assign whole NUMA nodes to TME until reaching or exceeding the target */
+        for (int i = 0; i < numNumaNodes + 1; i++)
+        {
+            if (!threadsPerPool[i] && !nodeMaskPerPool[i])
+                continue;
+
+            int toTake = X265_MIN(threadsPerPool[i], targetTME - threads[0]);
+            if (toTake > 0)
+            {
+                threads[poolIndex] += toTake;
+                nodeMasks[poolIndex] |= nodeMaskPerPool[i];
+                tmeNumaNodes++;
+
+                if (threads[0] == targetTME)
+                    poolIndex++;
+
+                if (toTake < threadsPerPool[i])
+                    leftover = threadsPerPool[i] - toTake;
+            }
+            else
+            {
+                threads.push_back(threadsPerPool[i]);
+                nodeMasks.push_back(nodeMaskPerPool[i]);
+                poolIndex++;
+            }
+        }
+
+        // Distribute leftover threads among FrameEncoders
+        if (leftover)
+        {
+            // Case 1: There are 1 or more threadpools for FrameEncoder(s) by now
+            if (threads.size() > 1)
+            {
+                int split = static_cast<int>(static_cast<double>(leftover) / (numNumaNodes - 1));
+                for (int pool = 1; pool < numNumaNodes; pool++)
+                {
+                    int give = X265_MIN(split, leftover);
+                    threads[pool] += give;
+                    leftover -= give;
+                }
+            }
+
+            // Case 2: FrameEncoder(s) haven't received threads yet
+            if (threads.size() == 1)
+            {
+                threads.push_back(leftover);
+                // Give the same node mask as the last node of ThreadedME
+                uint64_t msb = 1;
+                uint64_t tmeNodeMask = nodeMasks[0];
+                while (tmeNodeMask > 1)
+                {
+                    tmeNodeMask >>= 1;
+                    msb <<= 1;
+                }
+                nodeMasks.push_back(msb);
+            }
+        }
+
+        // Apply calculated threadpool assignment
+        memset(threadsPerPool, 0, sizeof(int) * (numNumaNodes + 2));
+        memset(nodeMaskPerPool, 0, sizeof(uint64_t) * (numNumaNodes + 2));
+
+        numPools = numNumaNodes = static_cast<int>(threads.size());
+        for (int pool = 0; pool < numPools; pool++)
+        {
+            threadsPerPool[pool] = threads[pool];
+            nodeMaskPerPool[pool] = nodeMasks[pool];
+        }
+    }
+    else
+#endif
+    {
+        memset(threadsPerPool, 0, sizeof(int) * (numNumaNodes + 2));
+        memset(nodeMaskPerPool, 0, sizeof(uint64_t) * (numNumaNodes + 2));
+
+        threadsPerPool[0] = targetTME;
+        nodeMaskPerPool[0] = 1;
+
+        threadsPerPool[1] = threadsFrameEnc;
+        nodeMaskPerPool[1] = 1;
+
+        numPools = 2;
+    }
+}
+
 /* Distributes totalNumThreads between ThreadedME and FrameEncoder pools.
  * Modifies threadsPerPool[], nodeMaskPerPool[], numNumaNodes, and numPools in-place.
  * Returns the number of threads reserved for frame encoding. */
@@ -528,6 +657,12 @@ ThreadPool* ThreadPool::allocThreadPools(x265_param* p, int& numPools, bool isTh
                                 nodeMaskPerPool, numPools, threadsFrameEnc);
     }
  
+    if (p->bEnableTemporalFilter)
+    {
+        distributeThreadsForMCSTF(p, totalNumThreads, numNumaNodes, bNumaSupport, threadsPerPool,
+            nodeMaskPerPool, numPools, threadsFrameEnc);
+    }
+
     // If the last pool size is > MAX_POOL_THREADS, clip it to spawn thread pools only of size >= 1/2 max (heuristic)
     if ((threadsPerPool[numNumaNodes] > MAX_POOL_THREADS) &&
         ((threadsPerPool[numNumaNodes] % MAX_POOL_THREADS) < (MAX_POOL_THREADS / 2)))
@@ -537,7 +672,7 @@ ThreadPool* ThreadPool::allocThreadPools(x265_param* p, int& numPools, bool isTh
                  "Creating only %d worker threads beyond specified numbers with --pools (if specified) to prevent asymmetry in pools; may not use all HW contexts\n", threadsPerPool[numNumaNodes]);
     }
 
-    if (!p->bThreadedME)
+    if (!p->bThreadedME && !p->bEnableTemporalFilter)
     {
         numPools = 0;
         for (int i = 0; i < numNumaNodes + 1; i++)
@@ -568,7 +703,7 @@ ThreadPool* ThreadPool::allocThreadPools(x265_param* p, int& numPools, bool isTh
     if (!numPools)
         return NULL;
 
-    if (numPools > p->frameNumThreads && !p->bThreadedME)
+    if (numPools > p->frameNumThreads && !p->bThreadedME && !p->bEnableTemporalFilter)
     {
         x265_log(p, X265_LOG_DEBUG, "Reducing number of thread pools for frame thread count\n");
         numPools = X265_MAX(p->frameNumThreads / 2, 1);
@@ -578,17 +713,17 @@ ThreadPool* ThreadPool::allocThreadPools(x265_param* p, int& numPools, bool isTh
     ThreadPool *pools = new ThreadPool[numPools];
     if (pools)
     {
-        int poolCount = (p->bThreadedME) ? numPools - 1 : numPools;
+        int poolCount = (p->bThreadedME || p->bEnableTemporalFilter) ? numPools - 1 : numPools;
         int node = 0;
         for (int i = 0; i < numPools; i++)
         {
-            int maxProviders = (p->bThreadedME && i == 0) // threadpool 0 is dedicated to ThreadedME
+            int maxProviders = ((p->bThreadedME || p->bEnableTemporalFilter) && i == 0) // threadpool 0 is dedicated to ThreadedME
                 ? 1
                 : (p->frameNumThreads + poolCount - 1) / poolCount + !isThreadsReserved; // +1 is Lookahead, always assigned to threadpool 0
             
             while (!threadsPerPool[node])
                 node++;
-            int numThreads = (p->bThreadedME) ? threadsPerPool[node] : X265_MIN(MAX_POOL_THREADS, threadsPerPool[node]);
+            int numThreads = (p->bThreadedME || p->bEnableTemporalFilter) ? threadsPerPool[node] : X265_MIN(MAX_POOL_THREADS, threadsPerPool[node]);
             int origNumThreads = numThreads;
 
             if (i == 0 && p->lookaheadThreads > numThreads / 2)
