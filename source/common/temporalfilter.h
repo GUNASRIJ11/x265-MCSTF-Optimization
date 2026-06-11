@@ -205,8 +205,8 @@ namespace X265_NS {
         int        slicetype;
     };
 
-    class TemporalFilter;
-    class MCSTFMEGroup
+    //class TemporalFilter;
+    /*class MCSTFMEGroup
     {
     public:
 
@@ -259,6 +259,54 @@ namespace X265_NS {
         void    motionestimation_luma_row(MotionEstimatorTLD& metld, MV* mvs, uint32_t mvStride, pixel* src, int stride, int height, int width, pixel* buf, int bs, int sRange,
                 int row,volatile int& atomicBlockX, volatile int* prevAtomicBlockX, MV* previous = 0, uint32_t prevmvStride = 0, int factor = 1);
 
+    };
+    */
+
+    class TemporalFilter;
+    class MCSTFMEGroup : public BondedTaskGroup
+    {
+    public:
+        TemporalFilter& m_mcstf;
+        ThreadPool* m_pool;
+        ThreadSafeInteger m_tasksAllocated;
+        int              m_numBlockRows;   // live row count for this frame
+        int              m_mcstfUnitSize;   // block size in pixels\
+
+
+        MCSTFMEGroup(TemporalFilter& t, ThreadPool* pool) : m_mcstf(t) {
+            m_pool = pool;
+        }
+
+
+        /* Batch cost estimates, using one worker thread per estimateFrameCost() call */
+        enum { MAX_BATCH_SIZE = 512 };
+        struct Estimate
+        {
+            int  p0, b, p1;
+            Frame* frame = NULL;
+            bool   bRowMode;
+            int    blockRow;
+            int    MElevel;
+            volatile int    atomicBlockX;
+            volatile int* prevAtomicBlockX;
+        } m_estimates[MAX_BATCH_SIZE];
+        //void add_row(int refIdx, int poc, int curPoc, Frame* pic, int blockRow);
+        void processTasks(int workerThreadID);
+        void finishBatch();
+        void    initRowSync(int numRef, int numBlockRows, int blockSize);
+        void add_row(int refIdx, int poc, int curPoc, Frame* pic, int blockRow, int level);
+        void add(int p0, int p1, int b, Frame* pic);
+
+    protected:
+
+        //void    estimatelowresmotion(MotionEstimatorTLD& m_metld, Frame* curframe, int refId);
+        //void    estimatelowresmotion_doubleres(MotionEstimatorTLD& m_metld, Frame* curframe, int refId, int blockRow);
+        void    estimatelowresmotion(MotionEstimatorTLD& m_metld, Frame* curframe, int refId, int rowMELevel);
+        void    motionestimation_doubleres_row(MotionEstimatorTLD& m_metld, Frame* curframe, int refId, int row, volatile int& atomicBlockX, volatile int* prevAtomicBlockX);
+        void    motionestimation_luma_row(MotionEstimatorTLD& metld, MV* mvs, uint32_t mvStride, pixel* src, int stride, int height, int width, pixel* buf, int bs, int sRange,
+            int row, volatile int& atomicBlockX, volatile int* prevAtomicBlockX, MV* previous = 0, uint32_t prevmvStride = 0, int factor = 1);
+
+        MCSTFMEGroup& operator=(const MCSTFMEGroup&);
     };
 
     class TemporalFilter :public JobProvider
@@ -384,5 +432,7 @@ namespace X265_NS {
             }
         }
     };
+
+
 }
 #endif

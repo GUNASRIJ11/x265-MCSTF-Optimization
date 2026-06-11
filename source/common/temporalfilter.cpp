@@ -380,8 +380,8 @@ TemporalFilter::TemporalFilter()
     m_chromaFactor = 0.55;
     m_sigmaMultiplier = 9.0;
     m_sigmaZeroPoint = 10.0;
-    m_activeGroup = NULL;
     m_mcstfWorkAvailable = false;
+    m_activeGroup = NULL;
 }
 
 TemporalFilter::~TemporalFilter()
@@ -427,9 +427,6 @@ void TemporalFilter::findJob(int workerThreadId)
     //printf("CALL processTasks worker=%d group=%p\n",
         //workerThreadId,
         //group);
-
-    if (group->m_tasksCompleted.get() >= group->m_jobTotal)
-        return;
 
     group->processTasks(workerThreadId);
 }
@@ -661,9 +658,6 @@ void TemporalFilter::runMCSTFME(Frame* pic, int rowMELevels, ThreadPool* pool)
 
 void MCSTFMEGroup::processTasks(int workerThreadId)
 {
-    m_activeWorkers.incr();
-
-    m_workersInside.incr();
     int id = workerThreadId;
 
     if (workerThreadId < 0)
@@ -672,20 +666,15 @@ void MCSTFMEGroup::processTasks(int workerThreadId)
 
     MotionEstimatorTLD& metld = m_mcstf.m_metld[id];
 
-    int task = m_tasksAllocated.getIncr(1);
 
-    if (task >= m_jobTotal)
+    while (m_jobAcquired < m_jobTotal)
     {
-        m_workersInside.decr();
-        return;
-    }
+        int i = m_jobAcquired++;
 
-    while (task < m_jobTotal)
-    {
-        Estimate& e = m_estimates[task];
+        Estimate& e = m_estimates[i];
 
         printf("this =%p numworkers %d MCSTF worker %d processing task %d\n",this, m_pool->m_numWorkers,
-            workerThreadId, task);
+            workerThreadId, i);
 
         if (!e.bRowMode)
         {
@@ -704,18 +693,6 @@ void MCSTFMEGroup::processTasks(int workerThreadId)
             else 
                 motionestimation_doubleres_row(metld, e.frame, e.p0, e.blockRow, e.atomicBlockX, e.prevAtomicBlockX);
         }
-        m_tasksCompleted.incr();
-
-        task = m_tasksAllocated.getIncr(1);
-    }
-
-    m_completedWorkers.incr();
-
-    m_workersInside.decr();
-    if (m_tasksCompleted.get() >= m_jobTotal)
-    {
-        m_mcstf.m_mcstfWorkAvailable = false;
-        return;
     }
     
     //printf("worker %d task %d done\n", workerThreadId, task);
@@ -1164,34 +1141,19 @@ void MCSTFMEGroup::add_row(int refIdx, int poc, int curPoc,
 
 void MCSTFMEGroup::finishBatch()
 {
-    m_tasksAllocated.set(0);
-    m_tasksCompleted.set(0);
-    m_activeWorkers.set(0);
-    m_completedWorkers.set(0);
-    m_workersInside.set(0);
-
-    //printf("SET activeGroup=%p\n", this);
-
-    m_mcstf.m_activeGroup = this;
-
-    //printf("AFTER SET activeGroup=%p\n",
-        //m_mcstf.m_activeGroup);
     m_mcstf.m_mcstfWorkAvailable = true;
 
     m_mcstf.m_helpWanted = true;
-
+    m_mcstf.m_activeGroup = this;
     // wake all workers in MCSTF pool
     for (int i = 0; i < m_pool->m_numWorkers; i++)
         m_mcstf.tryWakeOne();
 
-    // master participates
+    if (m_pool)
+        tryBondPeers(*m_pool, m_jobTotal);
     processTasks(-1);
-
-    while (m_tasksCompleted.get() < m_jobTotal)
-        GIVE_UP_TIME();
-    while (m_workersInside.get() > 1) // master still inside
-        GIVE_UP_TIME();
-
+    waitForExit();
+    m_jobTotal = m_jobAcquired = 0;
     m_mcstf.m_mcstfWorkAvailable = false;
     m_mcstf.m_activeGroup = NULL;
     //printf("finishBatch mcstf=%p\n", &m_mcstf);

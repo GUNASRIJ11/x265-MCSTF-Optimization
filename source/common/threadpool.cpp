@@ -739,8 +739,7 @@ ThreadPool* ThreadPool::allocThreadPools(x265_param* p, int& numPools, bool isTh
             }
             else if (i == 0)
                 numThreads -= p->lookaheadThreads;
-            if (p->bEnableEncoderRowME > -1)
-                maxProviders = 1;
+
             if (!pools[i].create(numThreads, maxProviders, nodeMaskPerPool[node]))
             {
                 delete[] pools;

@@ -1,0 +1,350 @@
+From 82286a8c22460ccdb1807f22f93d39195f6c1983 Mon Sep 17 00:00:00 2001
+From: Kirithika7 <kirithika@multicorewareinc.com>
+Date: Mon, 1 Jun 2026 18:51:30 +0530
+Subject: [PATCH] Modify MT code
+
+---
+ source/common/temporalfilter.cpp | 110 ++++++++++++++++++++++---------
+ source/common/temporalfilter.h   |  90 ++++++++++++++-----------
+ source/encoder/encoder.cpp       |  12 +++-
+ source/encoder/slicetype.h       |   1 -
+ 4 files changed, 144 insertions(+), 69 deletions(-)
+
+diff --git a/source/common/temporalfilter.cpp b/source/common/temporalfilter.cpp
+index 3f327bac0..7a8e184ed 100644
+--- a/source/common/temporalfilter.cpp
++++ b/source/common/temporalfilter.cpp
+@@ -150,6 +150,8 @@ TemporalFilter::TemporalFilter()
+     m_chromaFactor = 0.55;
+     m_sigmaMultiplier = 9.0;
+     m_sigmaZeroPoint = 10.0;
++    m_activeGroup = NULL;
++    m_mcstfWorkAvailable = false;
+ }
+ 
+ TemporalFilter::~TemporalFilter()
+@@ -169,6 +171,24 @@ void TemporalFilter::init(const x265_param* param)
+     m_metld = new MotionEstimatorTLD;
+ }
+ 
++void TemporalFilter::findJob(int workerThreadId)
++{
++    MCSTFMEGroup* group = m_activeGroup;
++
++    printf("activeGroup=%p worker=%d\n",
++        m_activeGroup,
++        workerThreadId);
++
++    printf("MCSTF findJob thread=%d\n", workerThreadId);
++    if (!group)
++        return;
++
++    if (!m_mcstfWorkAvailable)
++        return;
++
++    group->processTasks(workerThreadId);
++}
++
+ int TemporalFilter::createRefPicInfo(TemporalFilterRefPicInfo* refFrame, x265_param* param)
+ {
+     CHECKED_MALLOC_ZERO(refFrame->mvs, MV, sizeof(MV)* ((m_sourceWidth ) / 4) * ((m_sourceHeight ) / 4));
+@@ -414,7 +434,6 @@ void TemporalFilter::create(x265_param* param, ThreadPool* pool)
+ {
+         int numTLD = 1 + (pool ? pool->m_numWorkers + 1 : 0);
+         m_metld = new MotionEstimatorTLD[numTLD];
+-        //init(param);
+ }
+ 
+ void TemporalFilter::destroy()
+@@ -432,6 +451,8 @@ void TemporalFilter::runMCSTF(Frame* pic, ThreadPool* pool)
+     const int numBlockRows = (pic->m_fencPic->m_picHeight + blockSize - 1) / blockSize;
+     {
+         MCSTFMEGroup phase2(*this, pool);
++        printf("phase2=%p\n", &phase2);
++
+         phase2.initRowSync(numRef, numBlockRows, blockSize);
+ 
+         for (int j = 0; j < numRef; j++)
+@@ -542,35 +563,38 @@ void TemporalFilter::applyMotion(MV *mvs, uint32_t mvsStride, PicYuv *input, Pic
+     }
+ }
+ 
+-void MCSTFMEGroup::processTasks(int workerThreadID)
++void MCSTFMEGroup::processTasks(int workerThreadId)
+ {
+-    ThreadPool* pool = m_pool;
+-    int id = workerThreadID;
+-    if (workerThreadID < 0)
+-    {
+-        // Fix: Clamp the master thread to the very last index of the pool array safely
+-        id = (pool && pool->m_numWorkers > 0) ? (pool->m_numWorkers) : 0;
+-    }
++    m_activeWorkers.incr();
++
++    int id = workerThreadId;
++
++    if (workerThreadId < 0)
++        id = m_pool->m_numWorkers;
++
+ 
+-    MotionEstimatorTLD& m_metld = m_mcstf.m_metld[id];
++    MotionEstimatorTLD& metld = m_mcstf.m_metld[id];
+ 
+-    // 2. ELIMINATE THE LOCK: Use x265's atomic fetch-and-add tool instead.
+-    // Assuming m_tasksAllocated is a ThreadSafeInteger defined in your class header.
+-    int i = m_tasksAllocated.getIncr(1);
++    int task = m_tasksAllocated.getIncr(1);
+ 
+-    while (i < m_jobTotal)
++    while (task < m_jobTotal)
+     {
+-        Estimate& e = m_estimates[i];
++        Estimate& e = m_estimates[task];
+ 
+-        printf("Job created by thread %d\n", workerThreadID);
+-        // This heavy ME calculation now runs completely lock-free and fully parallelized
+-        estimatelowresmotion_doubleres(m_metld, e.frame, e.p0, e.blockRow);
++        printf("this =%d MCSTF worker %d processing task %d\n",this,
++            workerThreadId, task);
+ 
+-        // Atomically grab the next available job index without stopping other threads
+-        i = m_tasksAllocated.getIncr(1);
++        estimatelowresmotion_doubleres(
++            metld,
++            e.frame,
++            e.p0,
++            e.blockRow);
++
++        task = m_tasksAllocated.getIncr(1);
+     }
+-}
+ 
++    m_completedWorkers.incr();
++}
+ 
+ void MCSTFMEGroup::estimatelowresmotion_doubleres(MotionEstimatorTLD& metld, Frame* curFrame, int refId, int row)
+ {
+@@ -586,7 +610,7 @@ void MCSTFMEGroup::estimatelowresmotion_doubleres(MotionEstimatorTLD& metld, Fra
+     MV* previous = ref->mvs2;       // integer-pel seeds from Phase-1
+     uint32_t prevStride = ref->mvsStride2;
+     int* minError = ref->error;
+-    const int rowSize = m_mctfUnitSize; // e.g. 16
++    const int rowSize = 16; // e.g. 16
+     const int blockSize = 8;
+     const int stepSize = blockSize;
+     const int factor = 1;
+@@ -862,7 +886,7 @@ void MCSTFMEGroup::initRowSync(int numRefs, int numBlockRows,
+ {
+ 
+     m_numBlockRows = numBlockRows;
+-    m_mctfUnitSize = mctfUnitSize;
++    m_mcstfUnitSize = mctfUnitSize;
+ 
+     // for (int r = 0; r < numRefs; r++)
+     //     for (int row = 0; row < numBlockRows; row++)
+@@ -872,14 +896,40 @@ void MCSTFMEGroup::initRowSync(int numRefs, int numBlockRows,
+ void MCSTFMEGroup::finishBatch()
+ {
+     m_tasksAllocated.set(0);
+-    if (m_pool)
+-    {
+-        int num = tryBondPeers(*m_pool, m_jobTotal);
+-        printf("num=%d\n", num);
+-    }
++    m_activeWorkers.set(0);
++    m_completedWorkers.set(0);
++
++    printf("SET activeGroup=%p\n", this);
++
++    m_mcstf.m_activeGroup = this;
++
++    printf("AFTER SET activeGroup=%p\n",
++        m_mcstf.m_activeGroup);
++    m_mcstf.m_mcstfWorkAvailable = true;
++
++    m_mcstf.m_helpWanted = true;
++
++    // wake all workers in MCSTF pool
++    for (int i = 0; i < m_pool->m_numWorkers; i++)
++        m_mcstf.tryWakeOne();
++
++    // master participates
+     processTasks(-1);
+-    waitForExit();
+-    m_jobTotal = m_jobAcquired = 0;
++
++    // wait until all tasks assigned
++    while (m_tasksAllocated.get() < m_jobTotal)
++        GIVE_UP_TIME();
++
++    // wait until workers exit
++    int active;
++    do
++    {
++        active = m_activeWorkers.get();
++    } while (m_completedWorkers.get() < active);
++
++    m_mcstf.m_mcstfWorkAvailable = false;
++    m_mcstf.m_activeGroup = NULL;
++    printf("finishBatch mcstf=%p\n", &m_mcstf);
+ }
+ 
+ void TemporalFilter::bilateralFilter_core(Frame* frame,
+diff --git a/source/common/temporalfilter.h b/source/common/temporalfilter.h
+index 544c110b8..1178779e8 100644
+--- a/source/common/temporalfilter.h
++++ b/source/common/temporalfilter.h
+@@ -158,12 +158,64 @@ namespace X265_NS {
+         int        slicetype;
+     };
+ 
+-    class TemporalFilter 
++    class TemporalFilter;
++    class MCSTFMEGroup
++    {
++    public:
++
++        struct Estimate
++        {
++            int p0, b, p1;
++            int blockRow;
++            Frame* frame;
++        };
++
++        enum { MAX_BATCH_SIZE = 512 };
++
++        TemporalFilter& m_mcstf;
++        ThreadPool* m_pool;
++
++        Estimate        m_estimates[MAX_BATCH_SIZE];
++
++        ThreadSafeInteger m_tasksAllocated;
++        ThreadSafeInteger m_activeWorkers;
++        ThreadSafeInteger m_completedWorkers;
++        int m_numBlockRows = 0;
++        int m_mcstfUnitSize = 0;
++
++        int m_jobTotal;
++
++        MCSTFMEGroup(TemporalFilter& t, ThreadPool* pool)
++            : m_mcstf(t)
++            , m_pool(pool)
++            , m_jobTotal(0)
++        {
++        }
++
++        void add_row(int refIdx, int poc, int curPoc,
++            Frame* pic, int blockRow);
++
++        void processTasks(int workerThreadId);
++
++        void finishBatch();
++
++        void initRowSync(int numRef,
++            int numBlockRows,
++            int blockSize);
++        void    estimatelowresmotion_doubleres(MotionEstimatorTLD& m_metld, Frame* curframe, int refId, int blockRow);
++
++    };
++
++    class TemporalFilter :public JobProvider
+     {
+     public:
+         TemporalFilter();
+         ~TemporalFilter();
+ 
++        MCSTFMEGroup* m_activeGroup;
++        volatile bool m_mcstfWorkAvailable;
++
++        virtual void findJob(int workerThreadId);
+         void init(const x265_param* param);
+ 
+         //private:
+@@ -276,41 +328,5 @@ namespace X265_NS {
+             }
+         }
+     };
+-
+-    class MCSTFMEGroup : public BondedTaskGroup
+-    {
+-    public:
+-        TemporalFilter& m_mcstf;
+-        ThreadPool* m_pool;
+-        ThreadSafeInteger m_tasksAllocated;
+-        int              m_numBlockRows;   // live row count for this frame
+-        int              m_mctfUnitSize;   // block size in pixels\
+-
+-
+-        MCSTFMEGroup(TemporalFilter& t, ThreadPool* pool) : m_mcstf(t){
+-            m_pool = pool;
+-        }
+-
+-
+-        /* Batch cost estimates, using one worker thread per estimateFrameCost() call */
+-        enum { MAX_BATCH_SIZE = 512 };
+-        struct Estimate
+-        {
+-            int  p0, b, p1;
+-            int    blockRow;
+-            Frame* frame = NULL;
+-        } m_estimates[MAX_BATCH_SIZE];
+-        void add_row(int refIdx, int poc, int curPoc, Frame* pic, int blockRow);
+-        void processTasks(int workerThreadID);
+-        void finishBatch();
+-        void    initRowSync(int numRef, int numBlockRows, int blockSize);
+-    protected:
+-
+-        void    estimatelowresmotion(MotionEstimatorTLD& m_metld, Frame* curframe, int refId);
+-        void    estimatelowresmotion_doubleres(MotionEstimatorTLD& m_metld, Frame* curframe, int refId, int blockRow);
+-
+-        MCSTFMEGroup& operator=(const MCSTFMEGroup&);
+-    };
+-
+ }
+ #endif
+diff --git a/source/encoder/encoder.cpp b/source/encoder/encoder.cpp
+index 06f31ce3e..7ce403122 100644
+--- a/source/encoder/encoder.cpp
++++ b/source/encoder/encoder.cpp
+@@ -274,8 +274,10 @@ void Encoder::create()
+     if (allowPools)
+     {
+         m_threadPool = ThreadPool::allocThreadPools(p, m_numPools, 0);
+-        if(p->bEnableTemporalFilter && p->bEnableEncoderRowME)
++        if (p->bEnableTemporalFilter && p->bEnableEncoderRowME)
++        {
+             m_MCSTFthreadPool = ThreadPool::allocThreadPools(p, m_numPools, 1);
++        }
+         //m_threadPool = ThreadPool::allocThreadPools(p, m_numPools, 0);
+     }
+     else
+@@ -344,6 +346,14 @@ void Encoder::create()
+         {
+             m_mcstf = new TemporalFilter;
+             m_mcstf->create(m_param, m_MCSTFthreadPool);
++            m_mcstf->m_pool = &m_MCSTFthreadPool[0];
++
++            m_mcstf->m_jpId = 0;
++
++            m_MCSTFthreadPool[0].m_jpTable[0] = m_mcstf;
++            m_MCSTFthreadPool[0].m_numProviders = 1;
++            m_MCSTFthreadPool[0].start();
++            //init(param);
+         }
+         if (p->bThreadedME)
+         {
+diff --git a/source/encoder/slicetype.h b/source/encoder/slicetype.h
+index 043fad7e1..ca5c43845 100644
+--- a/source/encoder/slicetype.h
++++ b/source/encoder/slicetype.h
+@@ -337,7 +337,6 @@ protected:
+ 
+     void    estimatelowresmotion(MotionEstimatorTLD& m_metld, Frame* curframe, int refId);
+     void    estimatelowresmotion_doubleres(MotionEstimatorTLD& m_metld, Frame* curframe, int refId, int blockRow);
+-
+     CostEstimateGroup& operator=(const CostEstimateGroup&);
+ };
+ 
+-- 
+2.51.0.windows.1
+

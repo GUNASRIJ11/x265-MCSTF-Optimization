@@ -1,0 +1,114 @@
+From bd91170c38a596489dd2a130aa19943de967d126 Mon Sep 17 00:00:00 2001
+From: Kirithika7 <kirithika@multicorewareinc.com>
+Date: Wed, 10 Jun 2026 17:28:29 +0530
+Subject: [PATCH] Create threadpool with all pools Use wpp pool for bilateral
+ ME
+
+---
+ source/common/temporalfilter.cpp | 6 ++++--
+ source/common/threadpool.cpp     | 5 ++---
+ source/encoder/encoder.cpp       | 7 +++++--
+ source/encoder/frameencoder.cpp  | 2 +-
+ 4 files changed, 12 insertions(+), 8 deletions(-)
+
+diff --git a/source/common/temporalfilter.cpp b/source/common/temporalfilter.cpp
+index 637bb68cc..7ab50ce2e 100644
+--- a/source/common/temporalfilter.cpp
++++ b/source/common/temporalfilter.cpp
+@@ -684,8 +684,8 @@ void MCSTFMEGroup::processTasks(int workerThreadId)
+     {
+         Estimate& e = m_estimates[task];
+ 
+-        //printf("this =%p MCSTF worker %d processing task %d\n",this,
+-            //workerThreadId, task);
++        printf("this =%p numworkers %d MCSTF worker %d processing task %d\n",this, m_pool->m_numWorkers,
++            workerThreadId, task);
+ 
+         if (!e.bRowMode)
+         {
+@@ -1164,6 +1164,7 @@ void MCSTFMEGroup::add_row(int refIdx, int poc, int curPoc,
+ 
+ void MCSTFMEGroup::finishBatch()
+ {
++    m_pool->start();
+     m_tasksAllocated.set(0);
+     m_tasksCompleted.set(0);
+     m_activeWorkers.set(0);
+@@ -1196,6 +1197,7 @@ void MCSTFMEGroup::finishBatch()
+     m_mcstf.m_activeGroup = NULL;
+     //printf("finishBatch mcstf=%p\n", &m_mcstf);
+     m_mcstf.m_helpWanted = false;
++    m_pool->stopWorkers();
+ }
+ 
+ void TemporalFilter::applyMotion(MV *mvs, uint32_t mvsStride, PicYuv *input, PicYuv *output, const int blockRow, const int rowSize)
+diff --git a/source/common/threadpool.cpp b/source/common/threadpool.cpp
+index b9a96b7b3..37e6ece21 100644
+--- a/source/common/threadpool.cpp
++++ b/source/common/threadpool.cpp
+@@ -600,13 +600,12 @@ ThreadPool* ThreadPool::allocThreadPools(x265_param* p, int& numPools, bool isTh
+             if (isThreadsReserved)
+             {
+                 numThreads = p->lookaheadThreads;
+-                if (p->bEnableEncoderRowME > -1)
+-                    numThreads = MAX_ROW_ME_JOB;
+                 maxProviders = 1;
+             }
+             else if (i == 0)
+                 numThreads -= p->lookaheadThreads;
+-            
++            if (p->bEnableEncoderRowME > -1)
++                maxProviders = 1;
+             if (!pools[i].create(numThreads, maxProviders, nodeMaskPerPool[node]))
+             {
+                 delete[] pools;
+diff --git a/source/encoder/encoder.cpp b/source/encoder/encoder.cpp
+index a8e933a04..98534473a 100644
+--- a/source/encoder/encoder.cpp
++++ b/source/encoder/encoder.cpp
+@@ -276,7 +276,7 @@ void Encoder::create()
+         m_threadPool = ThreadPool::allocThreadPools(p, m_numPools, 0);
+         if (p->bEnableTemporalFilter && p->bEnableEncoderRowME > -1)
+         {
+-            m_MCSTFthreadPool = ThreadPool::allocThreadPools(p, m_numPools, 1);
++            m_MCSTFthreadPool = ThreadPool::allocThreadPools(p, m_numPools, 0);
+         }
+         //m_threadPool = ThreadPool::allocThreadPools(p, m_numPools, 0);
+     }
+@@ -352,7 +352,6 @@ void Encoder::create()
+ 
+             m_MCSTFthreadPool[0].m_jpTable[0] = m_mcstf;
+             m_MCSTFthreadPool[0].m_numProviders = 1;
+-            m_MCSTFthreadPool[0].start();
+             //init(param);
+         }
+         if (p->bThreadedME)
+@@ -2567,8 +2566,12 @@ int Encoder::encode(const x265_picture* pic_in, x265_picture* pic_out)
+             if (m_param->bEnableTemporalFilter && isFilterThisframe(frameEnc[0]->m_mcstf->m_sliceTypeConfig, frameEnc[0]->m_lowres.sliceType))
+             {
+                 if (m_param->bEnableLookaheadRowME == -1)
++                {
++                    //m_MCSTFthreadPool->start();
+                     m_mcstf->runMCSTFME(frameEnc[0], m_param->bEnableEncoderRowME, m_MCSTFthreadPool);
+ 
++                }
++
+                 for (int i = 0; i < frameEnc[0]->m_mcstf->m_numRef; i++)
+                 {
+                     TemporalFilterRefPicInfo* ref = &frameEnc[0]->m_mcstfRefList[i];
+diff --git a/source/encoder/frameencoder.cpp b/source/encoder/frameencoder.cpp
+index 1bb2c91f4..3a0bf98cf 100644
+--- a/source/encoder/frameencoder.cpp
++++ b/source/encoder/frameencoder.cpp
+@@ -664,7 +664,7 @@ void FrameEncoder::compressFrame(int layer)
+     {
+         m_frame[layer]->m_mcstf->m_QP = qp;
+         if (m_param->bEnableBilateralRowME)
+-            m_frame[layer]->m_mcstf->bilateralFilter(m_frame[layer], m_frame[layer]->m_mcstfRefList, m_param->temporalFilterStrength, m_top->m_MCSTFthreadPool);
++            m_frame[layer]->m_mcstf->bilateralFilter(m_frame[layer], m_frame[layer]->m_mcstfRefList, m_param->temporalFilterStrength, m_pool);
+         else
+             m_frame[layer]->m_mcstf->bilateralFilter_core(m_frame[layer], m_frame[layer]->m_mcstfRefList, m_param->temporalFilterStrength);
+     }
+-- 
+2.51.0.windows.1
+

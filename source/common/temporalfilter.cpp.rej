@@ -1,0 +1,49 @@
+diff a/source/common/temporalfilter.cpp b/source/common/temporalfilter.cpp	(rejected hunks)
+@@ -896,14 +896,40 @@
+ void MCSTFMEGroup::finishBatch()
+ {
+     m_tasksAllocated.set(0);
+-    if (m_pool)
+-    {
+-        int num = tryBondPeers(*m_pool, m_jobTotal);
+-        printf("num=%d\n", num);
+-    }
++    m_activeWorkers.set(0);
++    m_completedWorkers.set(0);
++
++    printf("SET activeGroup=%p\n", this);
++
++    m_mcstf.m_activeGroup = this;
++
++    printf("AFTER SET activeGroup=%p\n",
++        m_mcstf.m_activeGroup);
++    m_mcstf.m_mcstfWorkAvailable = true;
++
++    m_mcstf.m_helpWanted = true;
++
++    // wake all workers in MCSTF pool
++    for (int i = 0; i < m_pool->m_numWorkers; i++)
++        m_mcstf.tryWakeOne();
++
++    // master participates
+     processTasks(-1);
+-    waitForExit();
+-    m_jobTotal = m_jobAcquired = 0;
++
++    // wait until all tasks assigned
++    while (m_tasksAllocated.get() < m_jobTotal)
++        GIVE_UP_TIME();
++
++    // wait until workers exit
++    int active;
++    do
++    {
++        active = m_activeWorkers.get();
++    } while (m_completedWorkers.get() < active);
++
++    m_mcstf.m_mcstfWorkAvailable = false;
++    m_mcstf.m_activeGroup = NULL;
++    printf("finishBatch mcstf=%p\n", &m_mcstf);
+ }
+ 
+ void TemporalFilter::bilateralFilter_core(Frame* frame,

@@ -1,0 +1,271 @@
+From a84f04c43ef7be6ac23b6eff8c36c29ddd06c377 Mon Sep 17 00:00:00 2001
+From: Kirithika7 <kirithika@multicorewareinc.com>
+Date: Thu, 28 May 2026 17:24:58 +0530
+Subject: [PATCH] Create a new threadpool for MCSTF job
+
+---
+ source/common/temporalfilter.cpp | 24 ++++++++----------------
+ source/common/temporalfilter.h   | 15 ++++-----------
+ source/common/threadpool.cpp     |  6 +++---
+ source/common/threadpool.h       |  1 +
+ source/encoder/encoder.cpp       | 20 ++++++++++++--------
+ source/encoder/encoder.h         |  1 +
+ 6 files changed, 29 insertions(+), 38 deletions(-)
+
+diff --git a/source/common/temporalfilter.cpp b/source/common/temporalfilter.cpp
+index 46ad5a59f..0b76c8c50 100644
+--- a/source/common/temporalfilter.cpp
++++ b/source/common/temporalfilter.cpp
+@@ -411,8 +411,7 @@ int MotionEstimatorTLD::motionErrorLumaSSD(MotionEstimatorTLD& m_metld,
+ 
+ void TemporalFilter::create(x265_param* param, ThreadPool* pool)
+ {
+-        m_pool = &pool[0];
+-        int numTLD = 1 + (m_pool ? m_pool->m_numWorkers : 0);
++        int numTLD = 1 + (pool ? pool->m_numWorkers : 0);
+         m_metld = new MotionEstimatorTLD[numTLD];
+         init(param);
+ }
+@@ -422,7 +421,7 @@ void TemporalFilter::destroy()
+     delete m_metld;
+ }
+ 
+-void TemporalFilter::runMCSTF(Frame* pic)
++void TemporalFilter::runMCSTF(Frame* pic, ThreadPool* pool)
+ {
+     const int numRef = pic->m_mcstf->m_numRef;
+     if (numRef == 0)
+@@ -431,7 +430,7 @@ void TemporalFilter::runMCSTF(Frame* pic)
+     const int blockSize = 16;
+     const int numBlockRows = (pic->m_fencPic->m_picHeight + blockSize - 1) / blockSize;
+     {
+-        MCSTFMEGroup phase2(*this);
++        MCSTFMEGroup phase2(*this, pool);
+         phase2.initRowSync(numRef, numBlockRows, blockSize);
+ 
+         for (int j = 0; j < numRef; j++)
+@@ -448,15 +447,6 @@ void TemporalFilter::runMCSTF(Frame* pic)
+     }
+ }
+ 
+-//void TemporalFilter::findJob(int workerID) override{}
+-
+-void TemporalFilter::stopJobs()
+-{
+-    if (m_pool)
+-    {
+-            m_pool->stopWorkers();
+-    }
+-}
+ void TemporalFilter::applyMotion(MV *mvs, uint32_t mvsStride, PicYuv *input, PicYuv *output)
+ {
+     static const int lumaBlockSize = 8;
+@@ -553,7 +543,7 @@ void TemporalFilter::applyMotion(MV *mvs, uint32_t mvsStride, PicYuv *input, Pic
+ 
+ void MCSTFMEGroup::processTasks(int workerThreadID)
+ {
+-    ThreadPool* pool = m_mcstf.m_pool;
++    ThreadPool* pool = m_pool;
+     int id = workerThreadID;
+     if (workerThreadID < 0)
+         id = pool ? pool->m_numWorkers : 0;
+@@ -871,8 +861,8 @@ void MCSTFMEGroup::initRowSync(int numRefs, int numBlockRows,
+ 
+ void MCSTFMEGroup::finishBatch()
+ {
+-    if (m_mcstf.m_pool)
+-        tryBondPeers(*m_mcstf.m_pool, m_jobTotal);
++    if (m_pool)
++        tryBondPeers(*m_pool, m_jobTotal);
+     processTasks(-1);
+     waitForExit();
+     m_jobTotal = m_jobAcquired = 0;
+@@ -891,6 +881,8 @@ void TemporalFilter::bilateralFilter_core(Frame* frame,
+         applyMotion(m_mcstfRefList[i].mvs, m_mcstfRefList[i].mvsStride, m_mcstfRefList[i].picBuffer, ref->compensatedPic);
+     }
+ 
++
++
+     int refStrengthRow = 0;
+ 
+     if (frame->m_poc % 16 == 0)
+diff --git a/source/common/temporalfilter.h b/source/common/temporalfilter.h
+index e30b6c7d5..7dd08c58e 100644
+--- a/source/common/temporalfilter.h
++++ b/source/common/temporalfilter.h
+@@ -158,7 +158,7 @@ namespace X265_NS {
+         int        slicetype;
+     };
+ 
+-    class TemporalFilter : public JobProvider
++    class TemporalFilter 
+     {
+     public:
+         TemporalFilter();
+@@ -209,14 +209,8 @@ namespace X265_NS {
+         void applyMotion(MV *mvs, uint32_t mvsStride, PicYuv *input, PicYuv *output);
+         void applyMotionBlock(const pixel *pSrc, const int srcStride, pixel *dst, const intptr_t dstStride, const int w, const int h, const int *xFilter, const int *yFilter);
+         void    create(x265_param* param, ThreadPool*);
+-        void runMCSTF(Frame* pic);
++        void runMCSTF(Frame* pic, ThreadPool*);
+         void    destroy();
+-        void    stopJobs();
+-    protected:
+-        void    findJob(int workerThreadID) override {
+-            printf("hehehe");
+-
+-        }
+     };
+ 
+     class BilateralFilterGroup : public BondedTaskGroup
+@@ -293,8 +287,8 @@ namespace X265_NS {
+         int              m_numBlockRows;   // live row count for this frame
+         int              m_mctfUnitSize;   // block size in pixels
+ 
+-        MCSTFMEGroup(TemporalFilter& t) : m_mcstf(t){
+-            m_mctfUnitSize = 16;
++        MCSTFMEGroup(TemporalFilter& t, ThreadPool* pool) : m_mcstf(t){
++            m_pool = pool;
+         }
+ 
+ 
+@@ -310,7 +304,6 @@ namespace X265_NS {
+         void processTasks(int workerThreadID);
+         void finishBatch();
+         void    initRowSync(int numRef, int numBlockRows, int blockSize);
+-
+     protected:
+ 
+         void    estimatelowresmotion(MotionEstimatorTLD& m_metld, Frame* curframe, int refId);
+diff --git a/source/common/threadpool.cpp b/source/common/threadpool.cpp
+index e2b94c084..3908a8426 100644
+--- a/source/common/threadpool.cpp
++++ b/source/common/threadpool.cpp
+@@ -64,7 +64,6 @@
+ #define SLEEPBITMAP_BSF BSF
+ #define SLEEPBITMAP_OR  ATOMIC_OR
+ #define SLEEPBITMAP_AND ATOMIC_AND
+-
+ #endif
+ 
+ /* TODO FIX: Macro __MACH__ ideally should be part of MacOS definition, but adding to Cmake
+@@ -585,7 +584,7 @@ ThreadPool* ThreadPool::allocThreadPools(x265_param* p, int& numPools, bool isTh
+         {
+             int maxProviders = (p->bThreadedME && i == 0) // threadpool 0 is dedicated to ThreadedME
+                 ? 1
+-                : (p->frameNumThreads + poolCount - 1) / poolCount + !isThreadsReserved + 1; // +1 is Lookahead, always assigned to threadpool 0
++                : (p->frameNumThreads + poolCount - 1) / poolCount + !isThreadsReserved; // +1 is Lookahead, always assigned to threadpool 0
+             
+             while (!threadsPerPool[node])
+                 node++;
+@@ -601,6 +600,8 @@ ThreadPool* ThreadPool::allocThreadPools(x265_param* p, int& numPools, bool isTh
+             if (isThreadsReserved)
+             {
+                 numThreads = p->lookaheadThreads;
++                if (p->bEnableEncoderRowME)
++                    numThreads = 64;
+                 maxProviders = 1;
+             }
+             else if (i == 0)
+@@ -640,7 +641,6 @@ ThreadPool::ThreadPool()
+ bool ThreadPool::create(int numThreads, int maxProviders, uint64_t nodeMask)
+ {
+     X265_CHECK(numThreads <= MAX_POOL_THREADS, "a single thread pool cannot have more than MAX_POOL_THREADS threads\n");
+-
+ #if defined(_WIN32_WINNT) && _WIN32_WINNT >= _WIN32_WINNT_WIN7 
+     memset(&m_groupAffinity, 0, sizeof(GROUP_AFFINITY));
+     for (int i = 0; i < getNumaNodeCount(); i++)
+diff --git a/source/common/threadpool.h b/source/common/threadpool.h
+index 04e35528e..5f5ce517d 100644
+--- a/source/common/threadpool.h
++++ b/source/common/threadpool.h
+@@ -41,6 +41,7 @@ typedef uint32_t sleepbitmap_t;
+ #endif
+ 
+ static const sleepbitmap_t ALL_POOL_THREADS = (sleepbitmap_t)-1;
++#define MAX_ROW_ME_JOB 255
+ enum { MAX_POOL_THREADS = sizeof(sleepbitmap_t) * 8 };
+ enum { INVALID_SLICE_PRIORITY = 10 }; // a value larger than any X265_TYPE_* macro
+ 
+diff --git a/source/encoder/encoder.cpp b/source/encoder/encoder.cpp
+index 85c294d75..06f31ce3e 100644
+--- a/source/encoder/encoder.cpp
++++ b/source/encoder/encoder.cpp
+@@ -141,6 +141,7 @@ Encoder::Encoder()
+     m_param = NULL;
+     m_latestParam = NULL;
+     m_threadPool = NULL;
++    m_MCSTFthreadPool = NULL;
+     m_mcstf = NULL;
+     m_analysisFileIn = NULL;
+     m_analysisFileOut = NULL;
+@@ -271,7 +272,12 @@ void Encoder::create()
+ 
+     m_numPools = 0;
+     if (allowPools)
++    {
+         m_threadPool = ThreadPool::allocThreadPools(p, m_numPools, 0);
++        if(p->bEnableTemporalFilter && p->bEnableEncoderRowME)
++            m_MCSTFthreadPool = ThreadPool::allocThreadPools(p, m_numPools, 1);
++        //m_threadPool = ThreadPool::allocThreadPools(p, m_numPools, 0);
++    }
+     else
+     {
+         if (!p->frameNumThreads)
+@@ -337,12 +343,7 @@ void Encoder::create()
+         if (p->bEnableTemporalFilter && p->bEnableEncoderRowME)
+         {
+             m_mcstf = new TemporalFilter;
+-            m_mcstf->create(m_param, m_threadPool);
+-            m_mcstf->m_pool = &m_threadPool[0];
+-            m_mcstf->m_jpId = 0;
+-            m_threadPool[0].m_numProviders++;
+-            m_threadPool[0].m_jpTable[m_mcstf->m_jpId] = m_mcstf;
+-            printf("haha");
++            m_mcstf->create(m_param, m_MCSTFthreadPool);
+         }
+         if (p->bThreadedME)
+         {
+@@ -362,7 +363,6 @@ void Encoder::create()
+             m_frameEncoder[i]->m_pool = &m_threadPool[pool];
+             m_frameEncoder[i]->m_jpId = m_threadPool[pool].m_numProviders++;
+             m_threadPool[pool].m_jpTable[m_frameEncoder[i]->m_jpId] = m_frameEncoder[i];
+-            printf("haha");
+         }
+ 
+ 
+@@ -987,6 +987,10 @@ void Encoder::destroy()
+     // thread pools can be cleaned up now that all the JobProviders are
+     // known to be shutdown
+     delete [] m_threadPool;
++    if (m_param->bEnableTemporalFilter && m_param->bEnableEncoderRowME)
++    {
++        delete[] m_MCSTFthreadPool;
++    }
+ 
+     if (m_lookahead)
+     {
+@@ -2550,7 +2554,7 @@ int Encoder::encode(const x265_picture* pic_in, x265_picture* pic_out)
+             if (m_param->bEnableTemporalFilter && isFilterThisframe(frameEnc[0]->m_mcstf->m_sliceTypeConfig, frameEnc[0]->m_lowres.sliceType))
+             {
+                 if (m_param->bEnableEncoderRowME)
+-                    m_mcstf->runMCSTF(frameEnc[0]);
++                    m_mcstf->runMCSTF(frameEnc[0], m_MCSTFthreadPool);
+ 
+                 for (int i = 0; i < frameEnc[0]->m_mcstf->m_numRef; i++)
+                 {
+diff --git a/source/encoder/encoder.h b/source/encoder/encoder.h
+index 87d49fc8f..b4c5b4cc3 100644
+--- a/source/encoder/encoder.h
++++ b/source/encoder/encoder.h
+@@ -204,6 +204,7 @@ public:
+     uint32_t           m_numDelayedPic;
+ 
+     ThreadPool*        m_threadPool;
++    ThreadPool*        m_MCSTFthreadPool;
+     FrameEncoder*      m_frameEncoder[X265_MAX_FRAME_THREADS];
+     DPB*               m_dpb;
+     Frame*             m_exportedPic[MAX_LAYERS];
+-- 
+2.51.0.windows.1
+

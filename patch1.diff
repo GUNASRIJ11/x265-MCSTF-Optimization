@@ -1,0 +1,674 @@
+From 3532d8af63718689a70ae7eebfaae7015afb3e27 Mon Sep 17 00:00:00 2001
+From: Kirithika7 <kirithika@multicorewareinc.com>
+Date: Wed, 27 May 2026 22:31:19 +0530
+Subject: [PATCH] Exclude MCSTF as a job provider
+
+---
+ patch-fix-batch-me.diff          |  98 ++++++++
+ source/common/temporalfilter.cpp | 377 ++++++++++++++++++++++++++++++-
+ source/common/temporalfilter.h   |  48 +++-
+ source/common/threadpool.cpp     |   2 +-
+ source/encoder/encoder.cpp       |  16 +-
+ source/encoder/encoder.h         |   1 +
+ 6 files changed, 535 insertions(+), 7 deletions(-)
+ create mode 100644 patch-fix-batch-me.diff
+
+diff --git a/patch-fix-batch-me.diff b/patch-fix-batch-me.diff
+new file mode 100644
+index 000000000..5461857fe
+--- /dev/null
++++ b/patch-fix-batch-me.diff
+@@ -0,0 +1,98 @@
++From 5d9f608a86f5f578fe5aa6efa707d2b5a2fcc71a Mon Sep 17 00:00:00 2001
++From: Kirithika7 <kirithika@multicorewareinc.com>
++Date: Fri, 22 May 2026 19:56:11 +0530
++Subject: [PATCH] Lookahead:Fix batch ME
++
++---
++ source/encoder/slicetype.cpp | 17 +++++++++++------
++ source/encoder/slicetype.h   |  3 ++-
++ 2 files changed, 13 insertions(+), 7 deletions(-)
++
++diff --git a/source/encoder/slicetype.cpp b/source/encoder/slicetype.cpp
++index c0faced71..8d66ffabb 100644
++--- a/source/encoder/slicetype.cpp
+++++ b/source/encoder/slicetype.cpp
++@@ -2493,7 +2493,7 @@ void Lookahead::slicetypeDecide()
++                     if (frameEnc->m_lowres.lowresMcstfMvs[0][j - 1][0].x != 0x7FFF)
++                         continue;
++ 
++-                    estGroup.add(j - 1, i, frameEnc->m_poc);
+++                    estGroup.add(j - 1, i, frameEnc->m_poc, 1);
++                 }
++             }
++             frameEnc = frameEnc->m_next;
++@@ -3172,7 +3172,7 @@ void Lookahead::slicetypeAnalyse(Lowres **frames, bool bKeyframe)
++                     if (p1 >= numFrames || frames[b]->lowresMvs[1][i][0].x != 0x7FFF)
++                         p1 = b;
++ 
++-                    estGroup.add(p0, p1, b);
+++                    estGroup.add(p0, p1, b, 0);
++                 }
++             }
++             /* auto-disable after the first batch if pool is small */
++@@ -3210,7 +3210,7 @@ void Lookahead::slicetypeAnalyse(Lowres **frames, bool bKeyframe)
++                             if (frames[b]->costEst[i][j] >= 0)
++                                 continue;
++ 
++-                            estGroup.add(p0, p1, b);
+++                            estGroup.add(p0, p1, b, 0);
++                         }
++                     }
++                 }
++@@ -4383,7 +4383,7 @@ int64_t CostEstimateGroup::singleCost(int p0, int p1, int b, bool intraPenalty)
++     return estimateFrameCost(tld, p0, p1, b, intraPenalty);
++ }
++ 
++-void CostEstimateGroup::add(int p0, int p1, int b)
+++void CostEstimateGroup::add(int p0, int p1, int b, bool isMcstfJob)
++ {
++     X265_CHECK(m_batchMode || !m_jobTotal, "single CostEstimateGroup instance cannot mix batch modes\n");
++     m_batchMode = true;
++@@ -4395,6 +4395,7 @@ void CostEstimateGroup::add(int p0, int p1, int b)
++     e.bRowMode = false;
++     e.frame = NULL;
++     e.blockRow = -1;
+++    e.mcstfJob = isMcstfJob;
++ 
++     if (m_jobTotal == MAX_BATCH_SIZE)
++         finishBatch();
++@@ -4463,7 +4464,7 @@ void CostEstimateGroup::processTasks(int workerThreadID)
++             Estimate& e = m_estimates[i];
++             Frame* curFrame = e.frame ? e.frame : m_lookahead.m_inputQueue.getPOC(e.b);
++ 
++-            if (m_lookahead.m_param->bEnableTemporalFilter && curFrame && (curFrame->m_lowres.sliceType == X265_TYPE_IDR || curFrame->m_lowres.sliceType == X265_TYPE_I || curFrame->m_lowres.sliceType == X265_TYPE_P))
+++            if (e.mcstfJob && m_lookahead.m_param->bEnableTemporalFilter && curFrame && (curFrame->m_lowres.sliceType == X265_TYPE_IDR || curFrame->m_lowres.sliceType == X265_TYPE_I || curFrame->m_lowres.sliceType == X265_TYPE_P))
++             {
++                 if (!e.bRowMode)
++                 {
++@@ -4475,7 +4476,11 @@ void CostEstimateGroup::processTasks(int workerThreadID)
++                 }
++             }
++             else
++-                estimateFrameCost(tld, e.p0, e.p1, e.b, false);
+++            {
+++                if(e.mcstfJob == 0)
+++                    estimateFrameCost(tld, e.p0, e.p1, e.b, false);
+++            }
+++                
++         }
++         else
++         {
++diff --git a/source/encoder/slicetype.h b/source/encoder/slicetype.h
++index 043fad7e1..c9c0c4b67 100644
++--- a/source/encoder/slicetype.h
+++++ b/source/encoder/slicetype.h
++@@ -320,8 +320,9 @@ public:
++         Frame *frame = NULL;
++         bool   bRowMode;
++         int    blockRow;
+++        bool   mcstfJob;
++     } m_estimates[MAX_BATCH_SIZE];
++-    void add(int p0, int p1, int b);
+++    void add(int p0, int p1, int b, bool isMCSTFJob);
++     void add_row(int refIdx, int poc, int curPoc, Frame* pic, int blockRow);
++     void initRowSync(int numRefs, int numBlockRows, int mctfUnitSize);
++     void finishBatch();
++-- 
++2.51.0.windows.1
++
+diff --git a/source/common/temporalfilter.cpp b/source/common/temporalfilter.cpp
+index f6d518218..46ad5a59f 100644
+--- a/source/common/temporalfilter.cpp
++++ b/source/common/temporalfilter.cpp
+@@ -166,8 +166,6 @@ void TemporalFilter::init(const x265_param* param)
+     m_sourceHeight = param->sourceHeight;
+     m_internalCsp = param->internalCsp;
+     m_numComponents = (m_internalCsp != X265_CSP_I400) ? MAX_NUM_COMPONENT : 1;
+-
+-    m_metld = new MotionEstimatorTLD;
+ }
+ 
+ int TemporalFilter::createRefPicInfo(TemporalFilterRefPicInfo* refFrame, x265_param* param)
+@@ -411,6 +409,54 @@ int MotionEstimatorTLD::motionErrorLumaSSD(MotionEstimatorTLD& m_metld,
+     return error;
+ }
+ 
++void TemporalFilter::create(x265_param* param, ThreadPool* pool)
++{
++        m_pool = &pool[0];
++        int numTLD = 1 + (m_pool ? m_pool->m_numWorkers : 0);
++        m_metld = new MotionEstimatorTLD[numTLD];
++        init(param);
++}
++
++void TemporalFilter::destroy()
++{
++    delete m_metld;
++}
++
++void TemporalFilter::runMCSTF(Frame* pic)
++{
++    const int numRef = pic->m_mcstf->m_numRef;
++    if (numRef == 0)
++        return;
++
++    const int blockSize = 16;
++    const int numBlockRows = (pic->m_fencPic->m_picHeight + blockSize - 1) / blockSize;
++    {
++        MCSTFMEGroup phase2(*this);
++        phase2.initRowSync(numRef, numBlockRows, blockSize);
++
++        for (int j = 0; j < numRef; j++)
++        {
++            if (pic->m_lowres.lowresMcstfMvs[0][j][0].x != 0x7FFF)
++                continue;
++
++            for (int row = 0; row < numBlockRows; row++)
++                phase2.add_row(j, pic->m_mcstfRefList[j].poc,
++                    pic->m_poc, pic, row);
++        }
++
++        phase2.finishBatch();
++    }
++}
++
++//void TemporalFilter::findJob(int workerID) override{}
++
++void TemporalFilter::stopJobs()
++{
++    if (m_pool)
++    {
++            m_pool->stopWorkers();
++    }
++}
+ void TemporalFilter::applyMotion(MV *mvs, uint32_t mvsStride, PicYuv *input, PicYuv *output)
+ {
+     static const int lumaBlockSize = 8;
+@@ -505,6 +551,333 @@ void TemporalFilter::applyMotion(MV *mvs, uint32_t mvsStride, PicYuv *input, Pic
+     }
+ }
+ 
++void MCSTFMEGroup::processTasks(int workerThreadID)
++{
++    ThreadPool* pool = m_mcstf.m_pool;
++    int id = workerThreadID;
++    if (workerThreadID < 0)
++        id = pool ? pool->m_numWorkers : 0;
++    MotionEstimatorTLD& m_metld = m_mcstf.m_metld[id];
++
++    m_lock.acquire();
++    while (m_jobAcquired < m_jobTotal)
++    {
++        int i = m_jobAcquired++;
++        m_lock.release();
++        Estimate& e = m_estimates[i];
++        estimatelowresmotion_doubleres(m_metld, e.frame, e.p0, e.blockRow);
++        m_lock.acquire();
++    }
++    m_lock.release();
++}
++
++
++void MCSTFMEGroup::estimatelowresmotion_doubleres(MotionEstimatorTLD& metld, Frame* curFrame, int refId, int row)
++{
++    metld.m_bitDepth = curFrame->m_param->internalBitDepth;
++
++    TemporalFilterRefPicInfo* ref = &curFrame->m_mcstfRefList[refId];
++
++    // All pointers come straight from ref/curFrame — no allocation.
++    PicYuv* orig = curFrame->m_fencPic;
++    PicYuv* buffer = ref->picBuffer;
++    MV* mvs = ref->mvs;
++    uint32_t mvStride = ref->mvsStride;
++    MV* previous = ref->mvs2;       // integer-pel seeds from Phase-1
++    uint32_t prevStride = ref->mvsStride2;
++    int* minError = ref->error;
++    const int rowSize = m_mctfUnitSize; // e.g. 16
++    const int blockSize = 8;
++    const int stepSize = blockSize;
++    const int factor = 1;
++
++    const int origWidth = orig->m_picWidth;
++    const int origHeight = orig->m_picHeight;
++    int rowStart = row * rowSize;
++
++    if (row * rowSize > origHeight)
++        return;   // row beyond frame edge — nothing to do
++
++    // if (blockRow > 0)
++    // {
++    //     while (m_rowDone[refId][blockRow - 1] == 0)
++    //     {
++    //         GIVE_UP_TIME();
++    //     }
++    // }
++    int rowEnd = min(rowStart + rowSize, origHeight);
++    for (int blockY = rowStart; blockY + blockSize <= rowEnd; blockY += stepSize)
++    {
++        for (int blockX = 0; blockX + blockSize <= origWidth; blockX += stepSize)
++        {
++            const intptr_t pelOffset = blockY * orig->m_stride + blockX;
++            metld.me.setSourcePU(orig->m_picOrg[0], orig->m_stride,
++                pelOffset, blockSize, blockSize,
++                X265_HEX_SEARCH, 1);
++
++            MV  best(0, 0);
++            int leastError = INT_MAX;
++            int range = 0;
++            int error;
++
++            if (previous == NULL)
++            {
++                range = 8;
++            }
++            else
++            {
++                // 3×3 neighbourhood from lower-res seed MVs
++                for (int py = -1; py <= 1; py++)
++                {
++                    int testy = blockY / (2 * blockSize) + py;
++                    for (int px = -1; px <= 1; px++)
++                    {
++                        int testx = blockX / (2 * blockSize) + px;
++                        if (testx >= 0 && testx < origWidth / (2 * blockSize) &&
++                            testy >= 0 && testy < origHeight / (2 * blockSize))
++                        {
++                            MV old = previous[testy * prevStride + testx];
++                            error = metld.m_useSADinME
++                                ? metld.motionErrorLumaSAD(metld,
++                                    orig->m_picOrg[0], (int)orig->m_stride,
++                                    buffer->m_picOrg[0], blockX, blockY,
++                                    old.x * factor, old.y * factor,
++                                    blockSize, leastError)
++                                : metld.motionErrorLumaSSD(metld,
++                                    orig->m_picOrg[0], (int)orig->m_stride,
++                                    buffer->m_picOrg[0], blockX, blockY,
++                                    old.x * factor, old.y * factor,
++                                    blockSize, leastError);
++
++                            if (error < leastError)
++                            {
++                                best.set(old.x * factor, old.y * factor);
++                                leastError = error;
++                            }
++                        }
++                    }
++                }
++
++                // zero-MV candidate
++                error = metld.m_useSADinME
++                    ? metld.motionErrorLumaSAD(metld,
++                        orig->m_picOrg[0], (int)orig->m_stride,
++                        buffer->m_picOrg[0], blockX, blockY,
++                        0, 0, blockSize, leastError)
++                    : metld.motionErrorLumaSSD(metld,
++                        orig->m_picOrg[0], (int)orig->m_stride,
++                        buffer->m_picOrg[0], blockX, blockY,
++                        0, 0, blockSize, leastError);
++
++                if (error < leastError)
++                {
++                    best.set(0, 0);
++                    leastError = error;
++                }
++            }
++
++            // Integer search around best
++            MV prevBest = best;
++            for (int y2 = prevBest.y / metld.m_motionVectorFactor - range;
++                y2 <= prevBest.y / metld.m_motionVectorFactor + range; y2++)
++            {
++                for (int x2 = prevBest.x / metld.m_motionVectorFactor - range;
++                    x2 <= prevBest.x / metld.m_motionVectorFactor + range; x2++)
++                {
++                    error = metld.m_useSADinME
++                        ? metld.motionErrorLumaSAD(metld,
++                            orig->m_picOrg[0], (int)orig->m_stride,
++                            buffer->m_picOrg[0], blockX, blockY,
++                            x2 * metld.m_motionVectorFactor,
++                            y2 * metld.m_motionVectorFactor,
++                            blockSize, leastError)
++                        : metld.motionErrorLumaSSD(metld,
++                            orig->m_picOrg[0], (int)orig->m_stride,
++                            buffer->m_picOrg[0], blockX, blockY,
++                            x2 * metld.m_motionVectorFactor,
++                            y2 * metld.m_motionVectorFactor,
++                            blockSize, leastError);
++
++                    if (error < leastError)
++                    {
++                        best.set(x2 * metld.m_motionVectorFactor,
++                            y2 * metld.m_motionVectorFactor);
++                        leastError = error;
++                    }
++                }
++            }
++
++            // Sub-pel refinement
++            prevBest = best;
++            int doubleRange = 3 * 4;
++            for (int y2 = prevBest.y - doubleRange;
++                y2 <= prevBest.y + doubleRange; y2 += 4)
++            {
++                for (int x2 = prevBest.x - doubleRange;
++                    x2 <= prevBest.x + doubleRange; x2 += 4)
++                {
++                    error = metld.m_useSADinME
++                        ? metld.motionErrorLumaSAD(metld,
++                            orig->m_picOrg[0], (int)orig->m_stride,
++                            buffer->m_picOrg[0], blockX, blockY,
++                            x2, y2, blockSize, leastError)
++                        : metld.motionErrorLumaSSD(metld,
++                            orig->m_picOrg[0], (int)orig->m_stride,
++                            buffer->m_picOrg[0], blockX, blockY,
++                            x2, y2, blockSize, leastError);
++
++                    if (error < leastError)
++                    {
++                        best.set(x2, y2);
++                        leastError = error;
++                    }
++                }
++            }
++            prevBest = best;
++            doubleRange = 3;
++            for (int y2 = prevBest.y - doubleRange;
++                y2 <= prevBest.y + doubleRange; y2++)
++            {
++                for (int x2 = prevBest.x - doubleRange;
++                    x2 <= prevBest.x + doubleRange; x2++)
++                {
++                    error = metld.m_useSADinME
++                        ? metld.motionErrorLumaSAD(metld,
++                            orig->m_picOrg[0], (int)orig->m_stride,
++                            buffer->m_picOrg[0], blockX, blockY,
++                            x2, y2, blockSize, leastError)
++                        : metld.motionErrorLumaSSD(metld,
++                            orig->m_picOrg[0], (int)orig->m_stride,
++                            buffer->m_picOrg[0], blockX, blockY,
++                            x2, y2, blockSize, leastError);
++
++                    if (error < leastError)
++                    {
++                        best.set(x2, y2);
++                        leastError = error;
++                    }
++                }
++            }
++
++            if (blockY > 0)
++            {
++                int idx = ((blockY - stepSize) / stepSize) * mvStride + (blockX / stepSize);
++                MV aboveMV = mvs[idx];
++                error = metld.m_useSADinME
++                    ? metld.motionErrorLumaSAD(metld,
++                        orig->m_picOrg[0], (int)orig->m_stride,
++                        buffer->m_picOrg[0], blockX, blockY,
++                        aboveMV.x, aboveMV.y, blockSize, leastError)
++                    : metld.motionErrorLumaSSD(metld,
++                        orig->m_picOrg[0], (int)orig->m_stride,
++                        buffer->m_picOrg[0], blockX, blockY,
++                        aboveMV.x, aboveMV.y, blockSize, leastError);
++
++                if (error < leastError)
++                {
++                    best.set(aboveMV.x, aboveMV.y);
++                    leastError = error;
++                }
++            }
++
++            // Left MV — safe because we process left-to-right
++            if (blockX > 0)
++            {
++                int idx = ((blockY / stepSize) * mvStride + (blockX - stepSize) / stepSize);
++                MV leftMV = mvs[idx];
++
++                error = metld.m_useSADinME
++                    ? metld.motionErrorLumaSAD(metld,
++                        orig->m_picOrg[0], (int)orig->m_stride,
++                        buffer->m_picOrg[0], blockX, blockY,
++                        leftMV.x, leftMV.y, blockSize, leastError)
++                    : metld.motionErrorLumaSSD(metld,
++                        orig->m_picOrg[0], (int)orig->m_stride,
++                        buffer->m_picOrg[0], blockX, blockY,
++                        leftMV.x, leftMV.y, blockSize, leastError);
++
++                if (error < leastError)
++                {
++                    best.set(leftMV.x, leftMV.y);
++                    leastError = error;
++                }
++            }
++
++            // Variance normalisation (unchanged from motionEstimationLumaDoubleRes)
++            double avg = 0.0;
++            for (int x1 = 0; x1 < blockSize; x1++)
++            {
++                for (int y1 = 0; y1 < blockSize; y1++)
++                {
++                    avg = avg + *(orig->m_picOrg[0] + (blockX + x1 + orig->m_stride * (blockY + y1)));
++                }
++            }
++            avg = avg / (blockSize * blockSize);
++
++            // calculate variance
++            double variance = 0;
++            for (int x1 = 0; x1 < blockSize; x1++)
++            {
++                for (int y1 = 0; y1 < blockSize; y1++)
++                {
++                    int pix = *(orig->m_picOrg[0] + (blockX + x1 + orig->m_stride * (blockY + y1)));
++                    variance = variance + (pix - avg) * (pix - avg);
++                }
++            }
++
++            leastError = (int)(20 * ((leastError + 5.0) / (variance + 5.0)) + (leastError / (blockSize * blockSize)) / 50);
++
++            int mvIdx = (blockY / stepSize) * mvStride + (blockX / stepSize);
++            mvs[mvIdx] = best;
++            minError[mvIdx] = leastError;
++        }
++    }
++
++    // m_rowDone[refId][row] = 1;
++
++    // Mark the whole reference done after the last row
++    if (row == m_numBlockRows - 1)
++        curFrame->m_lowres.lowresMcstfMvs[0][refId][0].x = 1;
++}
++
++void MCSTFMEGroup::add_row(int refIdx, int poc, int curPoc,
++    Frame* pic, int blockRow)
++{
++    /*X265_CHECK(m_jobTotal,
++        "Cannot do MCSTF-ME in batch modes\n");*/
++
++    Estimate& e = m_estimates[m_jobTotal++];
++    e.p0 = refIdx;
++    e.p1 = poc;
++    e.b = curPoc;
++    e.frame = pic;
++    e.blockRow = blockRow;
++
++    if (m_jobTotal == MAX_BATCH_SIZE)
++        finishBatch();
++}
++
++void MCSTFMEGroup::initRowSync(int numRefs, int numBlockRows,
++    int mctfUnitSize)
++{
++
++    m_numBlockRows = numBlockRows;
++    m_mctfUnitSize = mctfUnitSize;
++
++    // for (int r = 0; r < numRefs; r++)
++    //     for (int row = 0; row < numBlockRows; row++)
++    //         m_rowDone[r][row] = 0;
++}
++
++void MCSTFMEGroup::finishBatch()
++{
++    if (m_mcstf.m_pool)
++        tryBondPeers(*m_mcstf.m_pool, m_jobTotal);
++    processTasks(-1);
++    waitForExit();
++    m_jobTotal = m_jobAcquired = 0;
++}
++
+ void TemporalFilter::bilateralFilter_core(Frame* frame,
+     TemporalFilterRefPicInfo* m_mcstfRefList,
+     double overallStrength)
+diff --git a/source/common/temporalfilter.h b/source/common/temporalfilter.h
+index 118f9a19d..e30b6c7d5 100644
+--- a/source/common/temporalfilter.h
++++ b/source/common/temporalfilter.h
+@@ -158,7 +158,7 @@ namespace X265_NS {
+         int        slicetype;
+     };
+ 
+-    class TemporalFilter
++    class TemporalFilter : public JobProvider
+     {
+     public:
+         TemporalFilter();
+@@ -208,10 +208,17 @@ namespace X265_NS {
+ 
+         void applyMotion(MV *mvs, uint32_t mvsStride, PicYuv *input, PicYuv *output);
+         void applyMotionBlock(const pixel *pSrc, const int srcStride, pixel *dst, const intptr_t dstStride, const int w, const int h, const int *xFilter, const int *yFilter);
++        void    create(x265_param* param, ThreadPool*);
++        void runMCSTF(Frame* pic);
++        void    destroy();
++        void    stopJobs();
++    protected:
++        void    findJob(int workerThreadID) override {
++            printf("hehehe");
+ 
+-
++        }
+     };
+-    
++
+     class BilateralFilterGroup : public BondedTaskGroup
+     {
+     public:
+@@ -277,5 +284,40 @@ namespace X265_NS {
+             m_lock.release();
+         }
+     };
++
++    class MCSTFMEGroup : public BondedTaskGroup
++    {
++    public:
++        TemporalFilter& m_mcstf;
++        ThreadPool* m_pool;
++        int              m_numBlockRows;   // live row count for this frame
++        int              m_mctfUnitSize;   // block size in pixels
++
++        MCSTFMEGroup(TemporalFilter& t) : m_mcstf(t){
++            m_mctfUnitSize = 16;
++        }
++
++
++        /* Batch cost estimates, using one worker thread per estimateFrameCost() call */
++        enum { MAX_BATCH_SIZE = 512 };
++        struct Estimate
++        {
++            int  p0, b, p1;
++            int    blockRow;
++            Frame* frame = NULL;
++        } m_estimates[MAX_BATCH_SIZE];
++        void add_row(int refIdx, int poc, int curPoc, Frame* pic, int blockRow);
++        void processTasks(int workerThreadID);
++        void finishBatch();
++        void    initRowSync(int numRef, int numBlockRows, int blockSize);
++
++    protected:
++
++        void    estimatelowresmotion(MotionEstimatorTLD& m_metld, Frame* curframe, int refId);
++        void    estimatelowresmotion_doubleres(MotionEstimatorTLD& m_metld, Frame* curframe, int refId, int blockRow);
++
++        MCSTFMEGroup& operator=(const MCSTFMEGroup&);
++    };
++
+ }
+ #endif
+diff --git a/source/common/threadpool.cpp b/source/common/threadpool.cpp
+index 6bde73c1d..e2b94c084 100644
+--- a/source/common/threadpool.cpp
++++ b/source/common/threadpool.cpp
+@@ -585,7 +585,7 @@ ThreadPool* ThreadPool::allocThreadPools(x265_param* p, int& numPools, bool isTh
+         {
+             int maxProviders = (p->bThreadedME && i == 0) // threadpool 0 is dedicated to ThreadedME
+                 ? 1
+-                : (p->frameNumThreads + poolCount - 1) / poolCount + !isThreadsReserved; // +1 is Lookahead, always assigned to threadpool 0
++                : (p->frameNumThreads + poolCount - 1) / poolCount + !isThreadsReserved + 1; // +1 is Lookahead, always assigned to threadpool 0
+             
+             while (!threadsPerPool[node])
+                 node++;
+diff --git a/source/encoder/encoder.cpp b/source/encoder/encoder.cpp
+index 75cd928f3..85c294d75 100644
+--- a/source/encoder/encoder.cpp
++++ b/source/encoder/encoder.cpp
+@@ -141,6 +141,7 @@ Encoder::Encoder()
+     m_param = NULL;
+     m_latestParam = NULL;
+     m_threadPool = NULL;
++    m_mcstf = NULL;
+     m_analysisFileIn = NULL;
+     m_analysisFileOut = NULL;
+     m_filmGrainIn = NULL;
+@@ -328,9 +329,21 @@ void Encoder::create()
+         m_threadedME = new ThreadedME(m_param, *this);
+     }
+ 
++
+     if (m_numPools)
+     {
+         // First threadpool belongs to ThreadedME, if the feature is enabled
++
++        if (p->bEnableTemporalFilter && p->bEnableEncoderRowME)
++        {
++            m_mcstf = new TemporalFilter;
++            m_mcstf->create(m_param, m_threadPool);
++            m_mcstf->m_pool = &m_threadPool[0];
++            m_mcstf->m_jpId = 0;
++            m_threadPool[0].m_numProviders++;
++            m_threadPool[0].m_jpTable[m_mcstf->m_jpId] = m_mcstf;
++            printf("haha");
++        }
+         if (p->bThreadedME)
+         {
+             m_threadedME->m_pool = &m_threadPool[0];
+@@ -349,6 +362,7 @@ void Encoder::create()
+             m_frameEncoder[i]->m_pool = &m_threadPool[pool];
+             m_frameEncoder[i]->m_jpId = m_threadPool[pool].m_numProviders++;
+             m_threadPool[pool].m_jpTable[m_frameEncoder[i]->m_jpId] = m_frameEncoder[i];
++            printf("haha");
+         }
+ 
+ 
+@@ -2536,7 +2550,7 @@ int Encoder::encode(const x265_picture* pic_in, x265_picture* pic_out)
+             if (m_param->bEnableTemporalFilter && isFilterThisframe(frameEnc[0]->m_mcstf->m_sliceTypeConfig, frameEnc[0]->m_lowres.sliceType))
+             {
+                 if (m_param->bEnableEncoderRowME)
+-                    m_lookahead->runMCSTF(frameEnc[0]);
++                    m_mcstf->runMCSTF(frameEnc[0]);
+ 
+                 for (int i = 0; i < frameEnc[0]->m_mcstf->m_numRef; i++)
+                 {
+diff --git a/source/encoder/encoder.h b/source/encoder/encoder.h
+index d532f699f..87d49fc8f 100644
+--- a/source/encoder/encoder.h
++++ b/source/encoder/encoder.h
+@@ -217,6 +217,7 @@ public:
+     RateControl*       m_rateControl;
+     Lookahead*         m_lookahead;
+     ThreadedME*        m_threadedME;
++    TemporalFilter*        m_mcstf;
+     AdaptiveFrameDuplication* m_dupBuffer[DUP_BUFFER];      // picture buffer of size 2
+     /*Frame duplication: Two pictures used to compute PSNR */
+     pixel*             m_dupPicOne[3];
+-- 
+2.51.0.windows.1
+

@@ -1,0 +1,61 @@
+From 4345239673c71946ba91fbe5ce01cc52a68db134 Mon Sep 17 00:00:00 2001
+From: Kirithika7 <kirithika@multicorewareinc.com>
+Date: Thu, 28 May 2026 17:41:58 +0530
+Subject: [PATCH] Fix bugs
+
+---
+ source/common/temporalfilter.cpp | 3 ++-
+ source/common/threadpool.cpp     | 2 +-
+ source/common/threadpool.h       | 2 +-
+ 3 files changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/source/common/temporalfilter.cpp b/source/common/temporalfilter.cpp
+index 0b76c8c50..52bed43f9 100644
+--- a/source/common/temporalfilter.cpp
++++ b/source/common/temporalfilter.cpp
+@@ -166,6 +166,7 @@ void TemporalFilter::init(const x265_param* param)
+     m_sourceHeight = param->sourceHeight;
+     m_internalCsp = param->internalCsp;
+     m_numComponents = (m_internalCsp != X265_CSP_I400) ? MAX_NUM_COMPONENT : 1;
++    m_metld = new MotionEstimatorTLD;
+ }
+ 
+ int TemporalFilter::createRefPicInfo(TemporalFilterRefPicInfo* refFrame, x265_param* param)
+@@ -413,7 +414,7 @@ void TemporalFilter::create(x265_param* param, ThreadPool* pool)
+ {
+         int numTLD = 1 + (pool ? pool->m_numWorkers : 0);
+         m_metld = new MotionEstimatorTLD[numTLD];
+-        init(param);
++        //init(param);
+ }
+ 
+ void TemporalFilter::destroy()
+diff --git a/source/common/threadpool.cpp b/source/common/threadpool.cpp
+index 3908a8426..9b242a88f 100644
+--- a/source/common/threadpool.cpp
++++ b/source/common/threadpool.cpp
+@@ -601,7 +601,7 @@ ThreadPool* ThreadPool::allocThreadPools(x265_param* p, int& numPools, bool isTh
+             {
+                 numThreads = p->lookaheadThreads;
+                 if (p->bEnableEncoderRowME)
+-                    numThreads = 64;
++                    numThreads = MAX_ROW_ME_JOB;
+                 maxProviders = 1;
+             }
+             else if (i == 0)
+diff --git a/source/common/threadpool.h b/source/common/threadpool.h
+index 5f5ce517d..e906a0f18 100644
+--- a/source/common/threadpool.h
++++ b/source/common/threadpool.h
+@@ -41,7 +41,7 @@ typedef uint32_t sleepbitmap_t;
+ #endif
+ 
+ static const sleepbitmap_t ALL_POOL_THREADS = (sleepbitmap_t)-1;
+-#define MAX_ROW_ME_JOB 255
++#define MAX_ROW_ME_JOB 5
+ enum { MAX_POOL_THREADS = sizeof(sleepbitmap_t) * 8 };
+ enum { INVALID_SLICE_PRIORITY = 10 }; // a value larger than any X265_TYPE_* macro
+ 
+-- 
+2.51.0.windows.1
+
