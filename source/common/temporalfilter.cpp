@@ -611,49 +611,51 @@ void TemporalFilter::runMCSTFME(Frame* pic, int rowMELevels, ThreadPool* pool)
 
     //     phase2->finishBatch();
     // }
-    if (rowMELevels < 4)
-    {
-        MCSTFMEGroup *estGroup = new MCSTFMEGroup(*this, pool);
-        for (int j = 1; j <= pic->m_mcstf->m_numRef; j++)
-        {
-            TemporalFilterRefPicInfo* ref = &pic->m_mcstfRefList[j - 1];
-            int i = ref->poc;
+    //if (rowMELevels < 4)
+    //{
+    //    MCSTFMEGroup *estGroup = new MCSTFMEGroup(*this, pool);
+    //    for (int j = 1; j <= pic->m_mcstf->m_numRef; j++)
+    //    {
+    //        TemporalFilterRefPicInfo* ref = &pic->m_mcstfRefList[j - 1];
+    //        int i = ref->poc;
 
-            /* Skip search if already done */
-            if (pic->m_lowres.lowresMcstfMvs[0][j - 1][0].x != 0x7FFF)
-                continue;
+    //        /* Skip search if already done */
+    //        if (pic->m_lowres.lowresMcstfMvs[0][j - 1][0].x != 0x7FFF)
+    //            continue;
 
-            estGroup->add(j - 1, i, pic->m_poc, pic);
-        }
-        estGroup->finishBatch();
-    }
-    if (rowMELevels)
-    {
-        // const int rowMELevels     = m_param->bEnableLookaheadRowME;
-        const int rowLevelBlockSize[4]    = {pic->m_param->L1Size, pic->m_param->L2Size, pic->m_param->L3Size, pic->m_param->L4Size};
-        const int origHeight       = pic->m_fencPic->m_picHeight;
-        const int levelHeight[4]   = {origHeight, origHeight, origHeight /2, origHeight / 4};
-        for(int i = rowMELevels; i > 0; i--)
-        {
-            const int numBlockRows = (levelHeight[i-1] + rowLevelBlockSize[i-1] - 1) / rowLevelBlockSize[i-1];
-            MCSTFMEGroup *estGroup = new MCSTFMEGroup(*this, pool);
+    //        estGroup->add(j - 1, i, pic->m_poc, pic);
+    //    }
+    //    estGroup->finishBatch();
+    //}
+    //if (rowMELevels)
+    //{
+    //    // const int rowMELevels     = m_param->bEnableLookaheadRowME;
+    //    const int rowLevelBlockSize[4]    = {pic->m_param->L1Size, pic->m_param->L2Size, pic->m_param->L3Size, pic->m_param->L4Size};
+    //    const int origHeight       = pic->m_fencPic->m_picHeight;
+    //    const int levelHeight[4]   = {origHeight, origHeight, origHeight /2, origHeight / 4};
+    //    for(int i = rowMELevels; i > 0; i--)
+    //    {
+    //        const int numBlockRows = (levelHeight[i-1] + rowLevelBlockSize[i-1] - 1) / rowLevelBlockSize[i-1];
+    //        MCSTFMEGroup *estGroup = new MCSTFMEGroup(*this, pool);
+    //        MCSTFMEGroup* group0 = new MCSTFMEGroup(*m_mcstf0, pool0);
+    //        MCSTFMEGroup* group1 = new MCSTFMEGroup(*m_mcstf1, pool1);
 
-            estGroup->initRowSync(pic->m_mcstf->m_numRef, numBlockRows, rowLevelBlockSize[i-1]);
-            for (int j = 1; j <= pic->m_mcstf->m_numRef; j++)
-            {
-                TemporalFilterRefPicInfo* ref = &pic->m_mcstfRefList[j - 1];
-                int refpoc = ref->poc;
+    //        estGroup->initRowSync(pic->m_mcstf->m_numRef, numBlockRows, rowLevelBlockSize[i-1]);
+    //        for (int j = 1; j <= pic->m_mcstf->m_numRef; j++)
+    //        {
+    //            TemporalFilterRefPicInfo* ref = &pic->m_mcstfRefList[j - 1];
+    //            int refpoc = ref->poc;
 
-                /* Skip search if already done */
-                if (pic->m_lowres.lowresMcstfMvs[0][j - 1][0].x != 0x7FFF)
-                    continue;
+    //            /* Skip search if already done */
+    //            if (pic->m_lowres.lowresMcstfMvs[0][j - 1][0].x != 0x7FFF)
+    //                continue;
 
-                for (int row = 0; row < numBlockRows; row++)
-                        estGroup->add_row(j - 1, refpoc, pic->m_poc, pic, row, i);
-            }
-            estGroup->finishBatch();
-        }
-    }
+    //            for (int row = 0; row < numBlockRows; row++)
+    //                    estGroup->add_row(j - 1, refpoc, pic->m_poc, pic, row, i);
+    //        }
+    //        estGroup->finishBatch();
+    //    }
+    //}
 }
 
 void MCSTFMEGroup::processTasks(int workerThreadId)
@@ -1139,8 +1141,39 @@ void MCSTFMEGroup::add_row(int refIdx, int poc, int curPoc,
         finishBatch();
 }
 
+
+void MCSTFMEGroup::startBatch()
+{
+    m_jobAcquired = 0;
+
+    m_mcstf.m_mcstfWorkAvailable = true;
+    m_mcstf.m_helpWanted = true;
+    m_mcstf.m_activeGroup = this;
+
+    for (int i = 0; i < m_pool->m_numWorkers; i++)
+        m_mcstf.tryWakeOne();
+
+    if (m_pool)
+        tryBondPeers(*m_pool, m_jobTotal);
+}
+
+void MCSTFMEGroup::waitBatch()
+{
+    processTasks(-1);
+
+    waitForExit();
+
+    m_jobTotal = 0;
+    m_jobAcquired = 0;
+
+    m_mcstf.m_mcstfWorkAvailable = false;
+    m_mcstf.m_activeGroup = NULL;
+    m_mcstf.m_helpWanted = false;
+}
+
 void MCSTFMEGroup::finishBatch()
 {
+    m_jobAcquired = 0;
     m_mcstf.m_mcstfWorkAvailable = true;
 
     m_mcstf.m_helpWanted = true;

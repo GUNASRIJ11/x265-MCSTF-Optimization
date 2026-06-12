@@ -293,7 +293,9 @@ namespace X265_NS {
         //void add_row(int refIdx, int poc, int curPoc, Frame* pic, int blockRow);
         void processTasks(int workerThreadID);
         void finishBatch();
-        void    initRowSync(int numRef, int numBlockRows, int blockSize);
+        void startBatch();
+        void waitBatch();
+        void initRowSync(int numRef, int numBlockRows, int blockSize);
         void add_row(int refIdx, int poc, int curPoc, Frame* pic, int blockRow, int level);
         void add(int p0, int p1, int b, Frame* pic);
 

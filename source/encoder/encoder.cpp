@@ -142,7 +142,8 @@ Encoder::Encoder()
     m_latestParam = NULL;
     m_threadPool = NULL;
     m_MCSTFthreadPool = NULL;
-    m_mcstf = NULL;
+    m_mcstf[0] = NULL;
+    m_mcstf[0] = NULL;
     m_analysisFileIn = NULL;
     m_analysisFileOut = NULL;
     m_filmGrainIn = NULL;
@@ -274,10 +275,10 @@ void Encoder::create()
     if (allowPools)
     {
         m_threadPool = ThreadPool::allocThreadPools(p, m_numPools, 0);
-        //if (p->bEnableTemporalFilter && p->bEnableEncoderRowME > -1)
-        //{
-        //    m_MCSTFthreadPool = ThreadPool::allocThreadPools(p, m_numPools, 0);
-        //}
+        if (p->bEnableTemporalFilter && p->bEnableEncoderRowME > -1)
+        {
+            m_MCSTFthreadPool = ThreadPool::allocThreadPools(p, m_numPools, 0);
+        }
         //m_threadPool = ThreadPool::allocThreadPools(p, m_numPools, 0);
     }
     else
@@ -344,14 +345,20 @@ void Encoder::create()
 
         if (p->bEnableTemporalFilter && p->bEnableEncoderRowME > -1)
         {
-            m_mcstf = new TemporalFilter;
-            m_mcstf->create(m_param, &m_threadPool[0]);
-            m_mcstf->m_pool = &m_threadPool[0];
+            m_mcstf[0] = new TemporalFilter;
+            m_mcstf[1] = new TemporalFilter;
+            m_mcstf[0]->create(m_param, m_MCSTFthreadPool);
+            m_mcstf[1]->create(m_param, m_MCSTFthreadPool);
+            m_mcstf[0]->m_pool = &m_MCSTFthreadPool[0];
+            m_mcstf[1]->m_pool = &m_MCSTFthreadPool[1];
 
-            m_mcstf->m_jpId = 0;
+            m_mcstf[0]->m_jpId = 0;
+            m_mcstf[1]->m_jpId = 0;
 
-            m_threadPool[0].m_jpTable[0] = m_mcstf;
-            m_threadPool[0].m_numProviders = 1;
+            m_MCSTFthreadPool[0].m_jpTable[0] = m_mcstf[0];
+            m_MCSTFthreadPool[1].m_jpTable[0] = m_mcstf[1];
+            m_MCSTFthreadPool[0].m_numProviders = 1;
+            m_MCSTFthreadPool[1].m_numProviders = 1;
             //init(param);
         }
         if (p->bThreadedME)
@@ -363,12 +370,12 @@ void Encoder::create()
             m_threadPool[0].m_jpTable[m_threadedME->m_jpId] = m_threadedME;
         }
 
-        int numFrameThreadPools = (!(m_param->bThreadedME || m_param->bEnableTemporalFilter)) ? m_numPools : m_numPools - 1;
+        int numFrameThreadPools = (!m_param->bThreadedME) ? m_numPools : m_numPools - 1;
 
         for (int i = 0; i < m_param->frameNumThreads; i++)
         {
             // Since first pool belongs to ThreadedME
-            int pool = static_cast<int>(p->bThreadedME || m_param->bEnableTemporalFilter) + i % numFrameThreadPools;
+            int pool = static_cast<int>(p->bThreadedME) + i % numFrameThreadPools;
             m_frameEncoder[i]->m_pool = &m_threadPool[pool];
             m_frameEncoder[i]->m_jpId = m_threadPool[pool].m_numProviders++;
             m_threadPool[pool].m_jpTable[m_frameEncoder[i]->m_jpId] = m_frameEncoder[i];
@@ -377,6 +384,12 @@ void Encoder::create()
 
         for (int j = 0; j < m_numPools; j++)
             m_threadPool[j].start();
+
+        if (p->bEnableTemporalFilter && p->bEnableEncoderRowME > -1)
+        {
+            for (int j = 0; j < m_numPools; j++)
+                m_MCSTFthreadPool[j].start();
+        }
     }
     else
     {
@@ -404,7 +417,7 @@ void Encoder::create()
         lookAheadThreadPool = ThreadPool::allocThreadPools(p, pools, 1);
     }
     else
-        lookAheadThreadPool = (!(m_param->bThreadedME || m_param->bEnableTemporalFilter)) ? m_threadPool : &m_threadPool[1];
+        lookAheadThreadPool = (!m_param->bThreadedME) ? m_threadPool : &m_threadPool[1];
     m_lookahead = new Lookahead(m_param, lookAheadThreadPool);
     if (pools)
     {
@@ -678,8 +691,11 @@ void Encoder::stopJobs()
             m_threadPool[i].stopWorkers();
     }
 
-    //if (m_MCSTFthreadPool)
-    //    m_MCSTFthreadPool->stopWorkers();
+    if (m_MCSTFthreadPool)
+    {
+        for (int i = 0; i < m_numPools; i++)
+            m_MCSTFthreadPool[i].stopWorkers();
+    }
 }
 
 int Encoder::copySlicetypePocAndSceneCut(int *slicetype, int *poc, int *sceneCut, int sLayer)
@@ -2568,7 +2584,72 @@ int Encoder::encode(const x265_picture* pic_in, x265_picture* pic_out)
                 if (m_param->bEnableLookaheadRowME == -1)
                 {
                     //m_MCSTFthreadPool->start();
-                    m_mcstf->runMCSTFME(frameEnc[0], m_param->bEnableEncoderRowME, m_mcstf->m_pool);
+                    //m_mcstf->runMCSTFME(frameEnc[0], m_param->bEnableEncoderRowME, m_mcstf->m_pool);
+
+                    if (m_param->bEnableEncoderRowME < 4)
+                    {
+                        //MCSTFMEGroup* estGroup = new MCSTFMEGroup(*this, pool);
+                        MCSTFMEGroup* estGroup0 = new MCSTFMEGroup(*m_mcstf[0], &m_MCSTFthreadPool[0]);
+                        //MCSTFMEGroup* estGroup1 = new MCSTFMEGroup(*m_mcstf[1], &m_MCSTFthreadPool[1]);
+                        for (int j = 1; j <= frameEnc[0]->m_mcstf->m_numRef; j++)
+                        {
+                            TemporalFilterRefPicInfo* ref = &frameEnc[0]->m_mcstfRefList[j - 1];
+                            int i = ref->poc;
+
+                            /* Skip search if already done */
+                            if (frameEnc[0]->m_lowres.lowresMcstfMvs[0][j - 1][0].x != 0x7FFF)
+                                continue;
+
+                            estGroup0->add(j - 1, i, frameEnc[0]->m_poc, frameEnc[0]);
+                        }
+                        estGroup0->finishBatch();
+                    }
+                    if (m_param->bEnableEncoderRowME)
+                    {
+                        Frame* pic = frameEnc[0];
+                        // const int rowMELevels     = m_param->bEnableLookaheadRowME;
+                        const int rowLevelBlockSize[4] = { pic->m_param->L1Size, pic->m_param->L2Size, pic->m_param->L3Size, pic->m_param->L4Size };
+                        const int origHeight = pic->m_fencPic->m_picHeight;
+                        const int levelHeight[4] = { origHeight, origHeight, origHeight / 2, origHeight / 4 };
+                        for (int i = m_param->bEnableEncoderRowME; i > 0; i--)
+                        {
+                            const int numBlockRows = (levelHeight[i - 1] + rowLevelBlockSize[i - 1] - 1) / rowLevelBlockSize[i - 1];
+                            //MCSTFMEGroup* estGroup = new MCSTFMEGroup(*this, pool);
+                            MCSTFMEGroup* estGroup0 = new MCSTFMEGroup(*m_mcstf[0], &m_MCSTFthreadPool[0]);
+                            MCSTFMEGroup* estGroup1 = new MCSTFMEGroup(*m_mcstf[1], &m_MCSTFthreadPool[1]);
+
+                            estGroup0->initRowSync(pic->m_mcstf->m_numRef/2, numBlockRows, rowLevelBlockSize[i - 1]);
+                            estGroup1->initRowSync(pic->m_mcstf->m_numRef / 2, numBlockRows, rowLevelBlockSize[i - 1]);
+                            for (int j = 1; j <= pic->m_mcstf->m_numRef/2; j++)
+                            {
+                                TemporalFilterRefPicInfo* ref = &pic->m_mcstfRefList[j - 1];
+                                int refpoc = ref->poc;
+
+                                /* Skip search if already done */
+                                if (pic->m_lowres.lowresMcstfMvs[0][j - 1][0].x != 0x7FFF)
+                                    continue;
+
+                                for (int row = 0; row < numBlockRows; row++)
+                                    estGroup0->add_row(j - 1, refpoc, pic->m_poc, pic, row, i);
+                            }
+                            estGroup0->startBatch();
+                            for (int j = pic->m_mcstf->m_numRef / 2; j <= pic->m_mcstf->m_numRef; j++)
+                            {
+                                TemporalFilterRefPicInfo* ref = &pic->m_mcstfRefList[j - 1];
+                                int refpoc = ref->poc;
+
+                                /* Skip search if already done */
+                                if (pic->m_lowres.lowresMcstfMvs[0][j - 1][0].x != 0x7FFF)
+                                    continue;
+
+                                for (int row = 0; row < numBlockRows; row++)
+                                    estGroup1->add_row(j - 1, refpoc, pic->m_poc, pic, row, i);
+                            }
+                            estGroup0->startBatch();
+                            estGroup0->waitBatch();
+                            estGroup0->waitBatch();
+                        }
+                    }
 
                 }
 

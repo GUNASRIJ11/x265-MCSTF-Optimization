@@ -218,7 +218,7 @@ public:
     RateControl*       m_rateControl;
     Lookahead*         m_lookahead;
     ThreadedME*        m_threadedME;
-    TemporalFilter*        m_mcstf;
+    TemporalFilter*        m_mcstf[2];
     AdaptiveFrameDuplication* m_dupBuffer[DUP_BUFFER];      // picture buffer of size 2
     /*Frame duplication: Two pictures used to compute PSNR */
     pixel*             m_dupPicOne[3];

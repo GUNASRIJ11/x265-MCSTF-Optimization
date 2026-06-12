@@ -672,7 +672,7 @@ ThreadPool* ThreadPool::allocThreadPools(x265_param* p, int& numPools, bool isTh
                  "Creating only %d worker threads beyond specified numbers with --pools (if specified) to prevent asymmetry in pools; may not use all HW contexts\n", threadsPerPool[numNumaNodes]);
     }
 
-    if (!p->bThreadedME && !p->bEnableTemporalFilter)
+    if (!p->bThreadedME)
     {
         numPools = 0;
         for (int i = 0; i < numNumaNodes + 1; i++)
@@ -703,7 +703,7 @@ ThreadPool* ThreadPool::allocThreadPools(x265_param* p, int& numPools, bool isTh
     if (!numPools)
         return NULL;
 
-    if (numPools > p->frameNumThreads && !p->bThreadedME && !p->bEnableTemporalFilter)
+    if (numPools > p->frameNumThreads && !p->bThreadedME)
     {
         x265_log(p, X265_LOG_DEBUG, "Reducing number of thread pools for frame thread count\n");
         numPools = X265_MAX(p->frameNumThreads / 2, 1);
@@ -713,17 +713,17 @@ ThreadPool* ThreadPool::allocThreadPools(x265_param* p, int& numPools, bool isTh
     ThreadPool *pools = new ThreadPool[numPools];
     if (pools)
     {
-        int poolCount = (p->bThreadedME || p->bEnableTemporalFilter) ? numPools - 1 : numPools;
+        int poolCount = (p->bThreadedME) ? numPools - 1 : numPools;
         int node = 0;
         for (int i = 0; i < numPools; i++)
         {
-            int maxProviders = ((p->bThreadedME || p->bEnableTemporalFilter) && i == 0) // threadpool 0 is dedicated to ThreadedME
+            int maxProviders = (p->bThreadedME && i == 0) // threadpool 0 is dedicated to ThreadedME
                 ? 1
                 : (p->frameNumThreads + poolCount - 1) / poolCount + !isThreadsReserved; // +1 is Lookahead, always assigned to threadpool 0
             
             while (!threadsPerPool[node])
                 node++;
-            int numThreads = (p->bThreadedME || p->bEnableTemporalFilter) ? threadsPerPool[node] : X265_MIN(MAX_POOL_THREADS, threadsPerPool[node]);
+            int numThreads = (p->bThreadedME) ? threadsPerPool[node] : X265_MIN(MAX_POOL_THREADS, threadsPerPool[node]);
             int origNumThreads = numThreads;
 
             if (i == 0 && p->lookaheadThreads > numThreads / 2)
