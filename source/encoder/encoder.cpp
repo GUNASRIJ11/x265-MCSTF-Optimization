@@ -2645,9 +2645,9 @@ int Encoder::encode(const x265_picture* pic_in, x265_picture* pic_out)
                                 for (int row = 0; row < numBlockRows; row++)
                                     estGroup1->add_row(j - 1, refpoc, pic->m_poc, pic, row, i);
                             }
-                            estGroup0->startBatch();
+                            estGroup1->startBatch();
                             estGroup0->waitBatch();
-                            estGroup0->waitBatch();
+                            estGroup1->waitBatch();
                         }
                     }
 
