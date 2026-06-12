@@ -675,8 +675,8 @@ void MCSTFMEGroup::processTasks(int workerThreadId)
 
         Estimate& e = m_estimates[i];
 
-        printf("this =%p numworkers %d MCSTF worker %d processing task %d\n",this, m_pool->m_numWorkers,
-            workerThreadId, i);
+        //printf("this =%p numworkers %d MCSTF worker %d processing task %d\n",this, m_pool->m_numWorkers,
+            //workerThreadId, i);
 
         if (!e.bRowMode)
         {
