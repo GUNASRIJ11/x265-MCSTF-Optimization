@@ -226,7 +226,7 @@ namespace X265_NS {
         TemporalFilter& m_mcstf;
         ThreadPool* m_pool;
 
-        Estimate        m_estimates[MAX_BATCH_SIZE];
+        Estimate        m_estimates[600];
 
         ThreadSafeInteger m_tasksAllocated;
         ThreadSafeInteger m_tasksCompleted;

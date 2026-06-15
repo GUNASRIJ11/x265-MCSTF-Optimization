@@ -2564,10 +2564,17 @@ int Encoder::encode(const x265_picture* pic_in, x265_picture* pic_out)
                  calcRefreshInterval(frameEnc[0]);
 
             // Generate MCSTF References and perform HME
-            if (m_param->bEnableTemporalFilter && isFilterThisframe(frameEnc[0]->m_mcstf->m_sliceTypeConfig, frameEnc[0]->m_lowres.sliceType))
+            if (m_param->bEnableTemporalFilter && frameEnc[0]->m_poc % 8 == 0)
             {
                 if (m_param->bEnableLookaheadRowME == -1)
+                {
+                    // if (!m_lookahead->generatemcstf(frameEnc[0], m_lookahead->m_origPicBuf->m_mcstfPicList, m_pocLast))
+                    // {
+                    //     x265_log(m_param, X265_LOG_ERROR, "Failed to initialize MCSTFReferencePicInfo at POC %d\n", frameEnc[0]->m_poc);
+                    //     fflush(stderr);
+                    // }
                     m_mcstf->runMCSTFME(frameEnc[0], m_param->bEnableEncoderRowME, m_MCSTFthreadPool);
+                }
 
                 for (int i = 0; i < frameEnc[0]->m_mcstf->m_numRef; i++)
                 {

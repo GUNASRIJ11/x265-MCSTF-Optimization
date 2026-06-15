@@ -376,7 +376,7 @@ TemporalFilter::TemporalFilter()
     m_sliceTypeConfig = 3;
     m_numRef = 0;
 
-    m_range = 2;
+    m_range = 4;
     m_chromaFactor = 0.55;
     m_sigmaMultiplier = 9.0;
     m_sigmaZeroPoint = 10.0;
@@ -1158,8 +1158,8 @@ void MCSTFMEGroup::add_row(int refIdx, int poc, int curPoc,
     e.atomicBlockX     = 0;
     e.prevAtomicBlockX = (blockRow == 0 || m_jobTotal == 1) ? NULL : &m_estimates[m_jobTotal - 2].atomicBlockX;
 
-    if (m_jobTotal == MAX_BATCH_SIZE)
-        finishBatch();
+    /*if (m_jobTotal == MAX_BATCH_SIZE)
+        finishBatch();*/
 }
 
 void MCSTFMEGroup::finishBatch()

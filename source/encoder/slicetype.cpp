@@ -2629,22 +2629,23 @@ void Lookahead::slicetypeDecide()
         }
     }
 
-    if (m_bBatchMotionSearch && m_param->bEnableTemporalFilter)
+    if ( m_param->bEnableTemporalFilter)
     {
         /* pre-calculate all motion searches, using many worker threads */
         Frame* frameEnc = m_inputQueue.first();
         for (int b = 0; b < m_inputQueue.size(); b++)
         {
-            if (m_param->bEnableTemporalFilter && isFilterThisframe(frameEnc->m_mcstf->m_sliceTypeConfig, frameEnc->m_lowres.sliceType))
-            {
+            if (m_param->bEnableTemporalFilter && frameEnc->m_poc % 8 == 0 && frameEnc->m_mcstf->m_numRef == 0 && frameEnc->m_lowres.sliceType != X265_TYPE_AUTO)
+            {   
                 if (!generatemcstf(frameEnc, m_origPicBuf->m_mcstfPicList, m_inputQueue.last()->m_poc))
                 {
                     x265_log(m_param, X265_LOG_ERROR, "Failed to initialize MCSTFReferencePicInfo at POC %d\n", frameEnc->m_poc);
                     fflush(stderr);
                 }
-
                 if(m_param->bEnableEncoderRowME == -1)
+                {
                     runMCSTFME(frameEnc, m_param->bEnableLookaheadRowME);
+                }
 
                 /*if (m_param->bEnableLookaheadRowME < 4)
                 {
@@ -4624,7 +4625,7 @@ void CostEstimateGroup::processTasks(int workerThreadID)
             Estimate& e = m_estimates[i];
             Frame* curFrame = e.frame ? e.frame : m_lookahead.m_inputQueue.getPOC(e.b);
 
-            if (m_lookahead.m_param->bEnableTemporalFilter && curFrame && (curFrame->m_lowres.sliceType == X265_TYPE_IDR || curFrame->m_lowres.sliceType == X265_TYPE_I || curFrame->m_lowres.sliceType == X265_TYPE_P))
+            if (m_lookahead.m_param->bEnableTemporalFilter && curFrame && curFrame->m_poc % 8 == 0 && curFrame->m_lowres.sliceType != X265_TYPE_AUTO)
             {
                 if (!e.bRowMode)
                 {

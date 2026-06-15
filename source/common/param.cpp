@@ -211,7 +211,7 @@ void x265_param_default(x265_param* param)
     param->bEnableSceneCutAwareQp = 0;
     param->fwdMaxScenecutWindow = 1200;
     param->bwdMaxScenecutWindow = 600;
-    param->mcstfFrameRange = 2;
+    param->mcstfFrameRange = 4;
     for (int i = 0; i < 6; i++)
     {
         int deltas[6] = { 5, 4, 3, 2, 1, 0 };
