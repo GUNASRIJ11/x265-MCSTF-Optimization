@@ -2300,32 +2300,6 @@ bool Lookahead::generatemcstf(Frame * frameEnc, PicList refPic, int poclast)
 
 void Lookahead::runMCSTFME(Frame* pic, int rowMELevels)
 {
-//    const int numRef     = pic->m_mcstf->m_numRef;
-//     if (numRef == 0)
-//         return;
-
-//     const int blockSize    = 16;
-//     const int numBlockRows = (pic->m_fencPic->m_picHeight + blockSize - 1) / blockSize;
-    
-//     {
-//        CostEstimateGroup phase2(*this, NULL);
-
-//        // Must be called before any add_row() so m_rowDone[] is zeroed
-//        phase2.initRowSync(numRef, numBlockRows, blockSize);
-
-//        for (int j = 0; j < numRef; j++)
-//        {
-//            if (pic->m_lowres.lowresMcstfMvs[0][j][0].x != 0x7FFF)
-//                continue;
-
-//            for (int row = 0; row < numBlockRows; row++)
-//                phase2.add_row(j, pic->m_mcstfRefList[j].poc,
-//                               pic->m_poc, pic, row, 4);
-//        }
-
-//        phase2.finishBatch();
-//     }
-
     if (rowMELevels < 4)
     {
         CostEstimateGroup estGroup(*this, NULL);
