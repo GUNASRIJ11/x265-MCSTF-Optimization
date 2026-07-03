@@ -276,7 +276,8 @@ void Encoder::create()
         m_threadPool = ThreadPool::allocThreadPools(p, m_numPools, 0);
         if (p->bEnableTemporalFilter && p->bEnableEncoderRowME > -1)
         {
-            m_MCSTFthreadPool = ThreadPool::allocThreadPools(p, m_numPools, 1);
+            int numMcstfPools = 0;
+            m_MCSTFthreadPool = ThreadPool::allocThreadPools(p, numMcstfPools, 1);
         }
         //m_threadPool = ThreadPool::allocThreadPools(p, m_numPools, 0);
     }
