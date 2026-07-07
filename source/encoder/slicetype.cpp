@@ -2241,7 +2241,9 @@ void Lookahead::slicetypeDecide()
                     frameEnc->m_lowres.sliceType == X265_TYPE_I   ||
                     frameEnc->m_lowres.bScenecut)
                 {
-                    m_filterThisGOP = (estimate_noise(frameEnc) >= 50000);
+                    int32_t score = estimate_noise(frameEnc);
+                    frameEnc->m_lowres.noiseScore = score;
+                    m_filterThisGOP = (score >= 50000);
                 }
             }
             else

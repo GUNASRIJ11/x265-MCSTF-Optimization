@@ -320,6 +320,8 @@ typedef struct x265_frame_stats
     int64_t          currTrBitrate;
     double           currTrCRF;
     int              currTrQP;
+    int32_t          frameNoise;       /* noise score at GOP start (selective-mcstf); -1 for non-GOP-start frames */
+    int              isMCSTFEnabled;   /* 1 if MCSTF bilateral filter will be applied to this frame */
 } x265_frame_stats;
 
 typedef struct x265_ctu_info_t

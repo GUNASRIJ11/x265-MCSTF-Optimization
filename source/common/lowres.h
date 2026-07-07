@@ -176,7 +176,8 @@ struct Lowres : public ReferencePlanes
     bool   bKeyframe;
     bool   bLastMiniGopBFrame;
     bool   bIsFadeEnd;
-    bool   filterThisGOP;   // Set by lookahead noise gate: true = GOP start was noisy, apply MCSTF
+    bool    filterThisGOP;  // Set by lookahead noise gate: true = GOP start was noisy, apply MCSTF
+    int32_t noiseScore;     // Raw noise score from estimate_noise() at GOP start; -1 for non-GOP-start frames
 
     double ipCostRatio;
 
