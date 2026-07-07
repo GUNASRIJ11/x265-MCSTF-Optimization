@@ -160,6 +160,7 @@ public:
     x265_param*   m_param;
     Lowres*       m_lastNonB;
     int*          m_scratch;         // temp buffer for cutree propagate
+    pixel*        m_noiseBlurBuf;    // persistent blur buffer for estimate_noise() fallback path
 
     /* pre-lookahead */
     int           m_fullQueueSize;
@@ -233,7 +234,7 @@ public:
     int     findSliceType(int poc);
     bool    generatemcstf(Frame * frame, PicList refPic, int poclast);
     bool    isFilterThisframe(uint8_t sliceTypeConfig, int curSliceType);
-    int32_t estimate_noise(PicYuv* srcFrame, unsigned int bitDepth, uint8_t compID);
+    int32_t estimate_noise(Frame* curFrame);
 
 
 protected:
@@ -337,6 +338,6 @@ protected:
     CostEstimateGroup& operator=(const CostEstimateGroup&);
 };
 
-bool computeEdge(pixel* edgePic, pixel* refPic, pixel* edgeTheta, intptr_t stride, int height, int width, bool bcalcTheta, pixel whitePixel = EDGE_THRESHOLD);
+bool computeEdge(pixel* edgePic, pixel* refPic, pixel* edgeTheta, intptr_t stride, int height, int width, bool bcalcTheta, pixel whitePixel = EDGE_THRESHOLD, int32_t* gradMag = NULL);
 }
 #endif // ifndef X265_SLICETYPE_H

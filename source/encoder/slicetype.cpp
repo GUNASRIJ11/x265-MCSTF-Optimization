@@ -97,14 +97,14 @@ uint32_t acEnergyVarHist(uint64_t sum_ssd, int shift)
     return ssd - ((uint64_t)sum * sum >> shift);
 }
 
-bool computeEdge(pixel* edgePic, pixel* refPic, pixel* edgeTheta, intptr_t stride, int height, int width, bool bcalcTheta, pixel whitePixel)
+bool computeEdge(pixel* edgePic, pixel* refPic, pixel* edgeTheta, intptr_t stride, int height, int width, bool bcalcTheta, pixel whitePixel, int32_t* gradMag)
 {
     intptr_t rowOne = 0, rowTwo = 0, rowThree = 0, colOne = 0, colTwo = 0, colThree = 0;
     intptr_t middle = 0, topLeft = 0, topRight = 0, bottomLeft = 0, bottomRight = 0;
 
     const int startIndex = 1;
 
-    if (!edgePic || !refPic || (!edgeTheta && bcalcTheta))
+    if ((!edgePic && !gradMag) || !refPic || (!edgeTheta && bcalcTheta))
     {
         return false;
     }
@@ -142,7 +142,7 @@ bool computeEdge(pixel* edgePic, pixel* refPic, pixel* edgeTheta, intptr_t strid
                 gradientH = (float)(-3 * refPic[topLeft] + 3 * refPic[topRight] - 10 * refPic[rowTwo + colOne] + 10 * refPic[rowTwo + colThree] - 3 * refPic[bottomLeft] + 3 * refPic[bottomRight]);
                 gradientV = (float)(-3 * refPic[topLeft] - 10 * refPic[rowOne + colTwo] - 3 * refPic[topRight] + 3 * refPic[bottomLeft] + 10 * refPic[rowThree + colTwo] + 3 * refPic[bottomRight]);
                 gradientMagnitude = sqrtf(gradientH * gradientH + gradientV * gradientV);
-                if(bcalcTheta) 
+                if(bcalcTheta)
                 {
                     edgeTheta[middle] = 0;
                     radians = atan2(gradientV, gradientH);
@@ -151,10 +151,40 @@ bool computeEdge(pixel* edgePic, pixel* refPic, pixel* edgeTheta, intptr_t strid
                        theta = 180 + theta;
                     edgeTheta[middle] = (pixel)theta;
                 }
-                edgePic[middle] = (pixel)(gradientMagnitude >= EDGE_THRESHOLD ? whitePixel : blackPixel);
+                if (edgePic)
+                    edgePic[middle] = (pixel)(gradientMagnitude >= EDGE_THRESHOLD ? whitePixel : blackPixel);
+                if (gradMag)
+                    gradMag[middle] = (int32_t)gradientMagnitude;
             }
         }
         return true;
+    }
+}
+
+static void gaussianBlur5x5(pixel* dst, const pixel* src, intptr_t stride, int height, int width)
+{
+    /*  5x5 Gaussian filter (sum = 159)
+        [2   4   5   4   2]
+     1  [4   9   12  9   4]
+    --- [5   12  15  12  5]
+    159 [4   9   12  9   4]
+        [2   4   5   4   2] */
+    for (int rowNum = 2; rowNum < height - 2; rowNum++)
+    {
+        for (int colNum = 2; colNum < width - 2; colNum++)
+        {
+            const intptr_t rowOne   = (rowNum - 2) * stride, colOne   = colNum - 2;
+            const intptr_t rowTwo   = (rowNum - 1) * stride, colTwo   = colNum - 1;
+            const intptr_t rowThree =  rowNum      * stride, colThree = colNum;
+            const intptr_t rowFour  = (rowNum + 1) * stride, colFour  = colNum + 1;
+            const intptr_t rowFive  = (rowNum + 2) * stride, colFive  = colNum + 2;
+            dst[rowThree + colThree] = (pixel)((
+                2 * src[rowOne   + colOne]   +  4 * src[rowOne   + colTwo]   +  5 * src[rowOne   + colThree]   +  4 * src[rowOne   + colFour]   + 2 * src[rowOne   + colFive] +
+                4 * src[rowTwo   + colOne]   +  9 * src[rowTwo   + colTwo]   + 12 * src[rowTwo   + colThree]   +  9 * src[rowTwo   + colFour]   + 4 * src[rowTwo   + colFive] +
+                5 * src[rowThree + colOne]   + 12 * src[rowThree + colTwo]   + 15 * src[rowThree + colThree]   + 12 * src[rowThree + colFour]   + 5 * src[rowThree + colFive] +
+                4 * src[rowFour  + colOne]   +  9 * src[rowFour  + colTwo]   + 12 * src[rowFour  + colThree]   +  9 * src[rowFour  + colFour]   + 4 * src[rowFour  + colFive] +
+                2 * src[rowFive  + colOne]   +  4 * src[rowFive  + colTwo]   +  5 * src[rowFive  + colThree]   +  4 * src[rowFive  + colFour]   + 2 * src[rowFive  + colFive]) / 159);
+        }
     }
 }
 
@@ -188,37 +218,7 @@ void edgeFilter(Frame *curFrame, x265_param* param)
     src = (pixel*)curFrame->m_fencPic->m_picOrg[0];
     refPic = curFrame->m_gaussianPic + curFrame->m_fencPic->m_lumaMarginY * stride + curFrame->m_fencPic->m_lumaMarginX;
     edgePic = curFrame->m_edgePic + curFrame->m_fencPic->m_lumaMarginY * stride + curFrame->m_fencPic->m_lumaMarginX;
-    pixel pixelValue = 0;
-
-    for (int rowNum = 0; rowNum < height; rowNum++)
-    {
-        for (int colNum = 0; colNum < width; colNum++)
-        {
-            if ((rowNum >= 2) && (colNum >= 2) && (rowNum < height - 2) && (colNum < width - 2)) //Ignoring the border pixels of the picture
-            {
-                /*  5x5 Gaussian filter
-                    [2   4   5   4   2]
-                 1  [4   9   12  9   4]
-                --- [5   12  15  12  5]
-                159 [4   9   12  9   4]
-                    [2   4   5   4   2]*/
-
-                const intptr_t rowOne = (rowNum - 2)*stride, colOne = colNum - 2;
-                const intptr_t rowTwo = (rowNum - 1)*stride, colTwo = colNum - 1;
-                const intptr_t rowThree = rowNum * stride, colThree = colNum;
-                const intptr_t rowFour = (rowNum + 1)*stride, colFour = colNum + 1;
-                const intptr_t rowFive = (rowNum + 2)*stride, colFive = colNum + 2;
-                const intptr_t index = (rowNum*stride) + colNum;
-
-                pixelValue = ((2 * src[rowOne + colOne] + 4 * src[rowOne + colTwo] + 5 * src[rowOne + colThree] + 4 * src[rowOne + colFour] + 2 * src[rowOne + colFive] +
-                    4 * src[rowTwo + colOne] + 9 * src[rowTwo + colTwo] + 12 * src[rowTwo + colThree] + 9 * src[rowTwo + colFour] + 4 * src[rowTwo + colFive] +
-                    5 * src[rowThree + colOne] + 12 * src[rowThree + colTwo] + 15 * src[rowThree + colThree] + 12 * src[rowThree + colFour] + 5 * src[rowThree + colFive] +
-                    4 * src[rowFour + colOne] + 9 * src[rowFour + colTwo] + 12 * src[rowFour + colThree] + 9 * src[rowFour + colFour] + 4 * src[rowFour + colFive] +
-                    2 * src[rowFive + colOne] + 4 * src[rowFive + colTwo] + 5 * src[rowFive + colThree] + 4 * src[rowFive + colFour] + 2 * src[rowFive + colFive]) / 159);
-                refPic[index] = pixelValue;
-            }
-        }
-    }
+    gaussianBlur5x5(refPic, src, stride, height, width);
 
     if(!computeEdge(edgePic, refPic, edgeTheta, stride, height, width, true))
         x265_log(NULL, X265_LOG_ERROR, "Failed edge computation!");
@@ -970,57 +970,60 @@ void LookaheadTLD::weightsAnalyse(Lowres& fenc, Lowres& ref)
     }
 }
 
-int32_t Lookahead::estimate_noise(PicYuv* srcFrame, unsigned int /*bitDepth*/, uint8_t compID)
+int32_t Lookahead::estimate_noise(Frame* curFrame)
 {
-    int      width  = !compID ? (int)srcFrame->m_picWidth  : (int)srcFrame->m_picWidth  / 2;
-    int      height = !compID ? (int)srcFrame->m_picHeight : (int)srcFrame->m_picHeight / 2;
-    intptr_t stride = !compID ? srcFrame->m_stride : srcFrame->m_strideC;
-    pixel*   src    = srcFrame->m_picOrg[compID];
+    int      width  = curFrame->m_fencPic->m_picWidth;
+    int      height = curFrame->m_fencPic->m_picHeight;
+    intptr_t stride = curFrame->m_fencPic->m_stride;
+    pixel*   src    = curFrame->m_fencPic->m_picOrg[0];
 
-    /* Pre-smooth with 3×3 box blur to suppress noise before Sobel differencing */
-    pixel* blurred = X265_MALLOC(pixel, stride * height);
-    if (!blurred) return -65536;
-    memcpy(blurred, src, stride * height * sizeof(pixel));
+    /* Blur source for Sobel: reuse m_gaussianPic (5×5 Gaussian, already computed by
+     * edgeFilter() during xPreanalyzeQp) when AQ-edge mode ran it; otherwise compute
+     * a 3×3 box blur inline. */
+    pixel* blurSrc;
+    if (m_param->rc.aqMode == X265_AQ_EDGE)
+    {
+        blurSrc = curFrame->m_gaussianPic
+                + curFrame->m_fencPic->m_lumaMarginY * stride
+                + curFrame->m_fencPic->m_lumaMarginX;
+    }
+    else
+    {
+        /* Lazy-allocate once per encode; stride*height is constant for a given source */
+        if (!m_noiseBlurBuf)
+        {
+            m_noiseBlurBuf = X265_MALLOC(pixel, stride * height);
+            if (!m_noiseBlurBuf) return -65536;
+        }
+        memcpy(m_noiseBlurBuf, src, stride * height * sizeof(pixel));
+        gaussianBlur5x5(m_noiseBlurBuf, src, stride, height, width);
+        blurSrc = m_noiseBlurBuf;
+    }
+
+    /* Gradient magnitudes via computeEdge — pass NULL edgePic, receive raw float magnitudes
+     * (cast to int32_t) in gradMag for the adaptive threshold step. */
+    int32_t* gradMag = X265_MALLOC(int32_t, stride * height);
+    if (!gradMag) return -65536;
+    memset(gradMag, 0, stride * height * sizeof(int32_t));
+
+    computeEdge(NULL, blurSrc, NULL, stride, height, width, false, EDGE_THRESHOLD, gradMag);
+
+    /* Find peak magnitude then apply adaptive threshold at 15% of peak.
+     * Sits between Canny's low (10%) and high (30%) thresholds. */
+    int32_t maxMag = 1; /* seed at 1 to avoid zero-divide on a fully flat frame */
     for (int i = 1; i < height - 1; ++i)
         for (int j = 1; j < width - 1; ++j)
         {
-            int sum9 = src[(i-1)*stride+(j-1)] + src[(i-1)*stride+j] + src[(i-1)*stride+(j+1)]
-                     + src[ i   *stride+(j-1)] + src[ i   *stride+j] + src[ i   *stride+(j+1)]
-                     + src[(i+1)*stride+(j-1)] + src[(i+1)*stride+j] + src[(i+1)*stride+(j+1)];
-            blurred[i*stride+j] = (pixel)(sum9 / 9);
+            int32_t m = gradMag[i * (int)stride + j];
+            if (m > maxMag) maxMag = m;
         }
-
-    /* Sobel gradient on blurred data; use L1 magnitude to avoid sqrt */
-    int32_t* gradMag = X265_MALLOC(int32_t, width * height);
-    if (!gradMag) { X265_FREE(blurred); return -65536; }
-    memset(gradMag, 0, width * height * sizeof(int32_t));
-
-    int32_t maxMag = 1; /* avoid zero-divide when image is fully flat */
-    for (int i = 1; i < height - 1; ++i)
-        for (int j = 1; j < width - 1; ++j)
-        {
-            const pixel* p = blurred + i * stride + j;
-            int gH = -3 * p[-stride-1] + 3 * p[-stride+1]
-                    -10 * p[       -1] +10 * p[        1]
-                     -3 * p[ stride-1] + 3 * p[ stride+1];
-            int gV = -3 * p[-stride-1] -10 * p[-stride] - 3 * p[-stride+1]
-                     +3 * p[ stride-1] +10 * p[ stride]  + 3 * p[ stride+1];
-            int32_t mag = abs(gH) + abs(gV);
-            gradMag[i * width + j] = mag;
-            if (mag > maxMag) maxMag = mag;
-        }
-    X265_FREE(blurred);
-
-    /* Adaptive threshold: 15% of peak gradient separates edges from flat regions.
-     * Sits between Canny's low (10%) and high (30%) thresholds; conservative enough
-     * to mask true edges without discarding noisy-but-flat pixels. */
     int32_t threshold = maxMag * 15 / 100;
 
     int64_t sum = 0, num = 0;
     for (int i = 1; i < height - 1; ++i)
         for (int j = 1; j < width - 1; ++j)
         {
-            if (gradMag[i * width + j] >= threshold) continue;
+            if (gradMag[i * (int)stride + j] >= threshold) continue;
             int k = i * (int)stride + j;
             /* Weighted Laplacian: centre x4, 4-neighbours x-2, diagonals x+1 */
             int v = 4 * src[k]
@@ -1041,8 +1044,9 @@ Lookahead::Lookahead(x265_param *param, ThreadPool* pool)
 
     m_lastNonB = NULL;
     m_isSceneTransition = false;
-    m_scratch  = NULL;
-    m_tld      = NULL;
+    m_scratch      = NULL;
+    m_tld          = NULL;
+    m_noiseBlurBuf = NULL;
     m_filled   = false;
     m_outputSignalRequired = false;
     m_isActive = true;
@@ -1262,6 +1266,7 @@ void Lookahead::destroy()
     X265_FREE(m_accHistDiffRunningAvgCr);
     X265_FREE(m_accHistDiffRunningAvg[0]);
     X265_FREE(m_accHistDiffRunningAvg);
+    X265_FREE(m_noiseBlurBuf);
     X265_FREE(m_scratch);
     delete [] m_tld;
     if (m_param->lookaheadThreads > 0)
@@ -2230,8 +2235,7 @@ void Lookahead::slicetypeDecide()
                     frameEnc->m_lowres.sliceType == X265_TYPE_I ||
                     frameEnc->m_lowres.bScenecut)
                 {
-                    int32_t noiseScore = estimate_noise(
-                        frameEnc->m_fencPic, m_param->internalBitDepth, 0);
+                    int32_t noiseScore = estimate_noise(frameEnc);
                     m_param->isFilterThisGOP = (noiseScore >= 50000) ? 1 : 0;
                 }
             //if (isFilterThisframe(frameEnc->m_mcstf->m_sliceTypeConfig, frameEnc->m_lowres.sliceType))
