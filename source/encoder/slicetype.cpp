@@ -2233,12 +2233,20 @@ void Lookahead::slicetypeDecide()
         {
             /* Noise gate: re-evaluate at every GOP boundary (IDR/I/scenecut).
              * m_filterThisGOP persists across batches so B/P frames that arrive
-             * before the next I-frame inherit the previous GOP's decision. */
-            if (frameEnc->m_lowres.sliceType == X265_TYPE_IDR ||
-                frameEnc->m_lowres.sliceType == X265_TYPE_I   ||
-                frameEnc->m_lowres.bScenecut)
+             * before the next I-frame inherit the previous GOP's decision.
+             * When selective-mcstf is off, always filter (preserve prior behavior). */
+            if (m_param->bSelectiveMCSTF)
             {
-                m_filterThisGOP = (estimate_noise(frameEnc) >= 50000);
+                if (frameEnc->m_lowres.sliceType == X265_TYPE_IDR ||
+                    frameEnc->m_lowres.sliceType == X265_TYPE_I   ||
+                    frameEnc->m_lowres.bScenecut)
+                {
+                    m_filterThisGOP = (estimate_noise(frameEnc) >= 50000);
+                }
+            }
+            else
+            {
+                m_filterThisGOP = true;
             }
             /* Stamp the per-frame flag so frameencoder reads a race-free value */
             frameEnc->m_lowres.filterThisGOP = m_filterThisGOP;

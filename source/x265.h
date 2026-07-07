@@ -2339,6 +2339,8 @@ typedef struct x265_param
     /*Motion compensated temporal filter*/
     int      bEnableTemporalFilter;
     double   temporalFilterStrength;
+    /* When enabled, estimate noise at each GOP boundary and skip MCSTF for clean GOPs */
+    int      bSelectiveMCSTF;
     /*Search Range for L0, L1 and L2 in MCSTF*/
     int      searchRangeForLayer0;
     int      searchRangeForLayer1;
