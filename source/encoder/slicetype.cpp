@@ -1034,7 +1034,7 @@ int32_t Lookahead::estimate_noise(Frame* curFrame)
         }
     X265_FREE(gradMag);
     if (num < 16) return -65536;
-    return (int32_t)((sum * 82137) / (6 * num));
+    return (int32_t)((sum * 82137) / (6 * num * (1 << (X265_DEPTH - 8))));
 }
 
 Lookahead::Lookahead(x265_param *param, ThreadPool* pool)
