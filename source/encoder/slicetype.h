@@ -233,6 +233,7 @@ public:
     int     findSliceType(int poc);
     bool    generatemcstf(Frame * frame, PicList refPic, int poclast);
     bool    isFilterThisframe(uint8_t sliceTypeConfig, int curSliceType);
+    int32_t estimate_noise(PicYuv* srcFrame, unsigned int bitDepth, uint8_t compID);
 
 
 protected:

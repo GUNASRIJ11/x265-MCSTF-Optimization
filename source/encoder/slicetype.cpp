@@ -970,6 +970,70 @@ void LookaheadTLD::weightsAnalyse(Lowres& fenc, Lowres& ref)
     }
 }
 
+int32_t Lookahead::estimate_noise(PicYuv* srcFrame, unsigned int /*bitDepth*/, uint8_t compID)
+{
+    int      width  = !compID ? (int)srcFrame->m_picWidth  : (int)srcFrame->m_picWidth  / 2;
+    int      height = !compID ? (int)srcFrame->m_picHeight : (int)srcFrame->m_picHeight / 2;
+    intptr_t stride = !compID ? srcFrame->m_stride : srcFrame->m_strideC;
+    pixel*   src    = srcFrame->m_picOrg[compID];
+
+    /* Pre-smooth with 3×3 box blur to suppress noise before Sobel differencing */
+    pixel* blurred = X265_MALLOC(pixel, stride * height);
+    if (!blurred) return -65536;
+    memcpy(blurred, src, stride * height * sizeof(pixel));
+    for (int i = 1; i < height - 1; ++i)
+        for (int j = 1; j < width - 1; ++j)
+        {
+            int sum9 = src[(i-1)*stride+(j-1)] + src[(i-1)*stride+j] + src[(i-1)*stride+(j+1)]
+                     + src[ i   *stride+(j-1)] + src[ i   *stride+j] + src[ i   *stride+(j+1)]
+                     + src[(i+1)*stride+(j-1)] + src[(i+1)*stride+j] + src[(i+1)*stride+(j+1)];
+            blurred[i*stride+j] = (pixel)(sum9 / 9);
+        }
+
+    /* Sobel gradient on blurred data; use L1 magnitude to avoid sqrt */
+    int32_t* gradMag = X265_MALLOC(int32_t, width * height);
+    if (!gradMag) { X265_FREE(blurred); return -65536; }
+    memset(gradMag, 0, width * height * sizeof(int32_t));
+
+    int32_t maxMag = 1; /* avoid zero-divide when image is fully flat */
+    for (int i = 1; i < height - 1; ++i)
+        for (int j = 1; j < width - 1; ++j)
+        {
+            const pixel* p = blurred + i * stride + j;
+            int gH = -3 * p[-stride-1] + 3 * p[-stride+1]
+                    -10 * p[       -1] +10 * p[        1]
+                     -3 * p[ stride-1] + 3 * p[ stride+1];
+            int gV = -3 * p[-stride-1] -10 * p[-stride] - 3 * p[-stride+1]
+                     +3 * p[ stride-1] +10 * p[ stride]  + 3 * p[ stride+1];
+            int32_t mag = abs(gH) + abs(gV);
+            gradMag[i * width + j] = mag;
+            if (mag > maxMag) maxMag = mag;
+        }
+    X265_FREE(blurred);
+
+    /* Adaptive threshold: 15% of peak gradient separates edges from flat regions.
+     * Sits between Canny's low (10%) and high (30%) thresholds; conservative enough
+     * to mask true edges without discarding noisy-but-flat pixels. */
+    int32_t threshold = maxMag * 15 / 100;
+
+    int64_t sum = 0, num = 0;
+    for (int i = 1; i < height - 1; ++i)
+        for (int j = 1; j < width - 1; ++j)
+        {
+            if (gradMag[i * width + j] >= threshold) continue;
+            int k = i * (int)stride + j;
+            /* Weighted Laplacian: centre x4, 4-neighbours x-2, diagonals x+1 */
+            int v = 4 * src[k]
+                  - 2 * (src[k-1] + src[k+1] + src[k-(int)stride] + src[k+(int)stride])
+                  +     (src[k-(int)stride-1] + src[k-(int)stride+1]
+                        + src[k+(int)stride-1] + src[k+(int)stride+1]);
+            sum += abs(v); ++num;
+        }
+    X265_FREE(gradMag);
+    if (num < 16) return -65536;
+    return (int32_t)((sum * 82137) / (6 * num));
+}
+
 Lookahead::Lookahead(x265_param *param, ThreadPool* pool)
 {
     m_param = param;
@@ -2161,7 +2225,17 @@ void Lookahead::slicetypeDecide()
         Frame* frameEnc = m_inputQueue.first();
         for (int b = 0; b < m_inputQueue.size(); b++)
         {
-            if (isFilterThisframe(frameEnc->m_mcstf->m_sliceTypeConfig, frameEnc->m_lowres.sliceType))
+            //Noise gate : gates bilateralFilter() this GOP via isFilterThisGOP* /
+                if (frameEnc->m_lowres.sliceType == X265_TYPE_IDR ||
+                    frameEnc->m_lowres.sliceType == X265_TYPE_I ||
+                    frameEnc->m_lowres.bScenecut)
+                {
+                    int32_t noiseScore = estimate_noise(
+                        frameEnc->m_fencPic, m_param->internalBitDepth, 0);
+                    m_param->isFilterThisGOP = (noiseScore >= 50000) ? 1 : 0;
+                }
+            //if (isFilterThisframe(frameEnc->m_mcstf->m_sliceTypeConfig, frameEnc->m_lowres.sliceType))
+            if (m_param->isFilterThisGOP && isFilterThisframe(frameEnc->m_mcstf->m_sliceTypeConfig, frameEnc->m_lowres.sliceType))
             {
                 if (!generatemcstf(frameEnc, m_origPicBuf->m_mcstfPicList, m_inputQueue.last()->m_poc))
                 {
