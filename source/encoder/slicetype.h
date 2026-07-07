@@ -161,6 +161,7 @@ public:
     Lowres*       m_lastNonB;
     int*          m_scratch;         // temp buffer for cutree propagate
     pixel*        m_noiseBlurBuf;    // persistent blur buffer for estimate_noise() fallback path
+    bool          m_filterThisGOP;  // noise gate decision for the GOP currently being dispatched
 
     /* pre-lookahead */
     int           m_fullQueueSize;

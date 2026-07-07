@@ -1044,9 +1044,10 @@ Lookahead::Lookahead(x265_param *param, ThreadPool* pool)
 
     m_lastNonB = NULL;
     m_isSceneTransition = false;
-    m_scratch      = NULL;
-    m_tld          = NULL;
-    m_noiseBlurBuf = NULL;
+    m_scratch        = NULL;
+    m_tld            = NULL;
+    m_noiseBlurBuf   = NULL;
+    m_filterThisGOP  = false;
     m_filled   = false;
     m_outputSignalRequired = false;
     m_isActive = true;
@@ -2230,16 +2231,19 @@ void Lookahead::slicetypeDecide()
         Frame* frameEnc = m_inputQueue.first();
         for (int b = 0; b < m_inputQueue.size(); b++)
         {
-            //Noise gate : gates bilateralFilter() this GOP via isFilterThisGOP* /
-                if (frameEnc->m_lowres.sliceType == X265_TYPE_IDR ||
-                    frameEnc->m_lowres.sliceType == X265_TYPE_I ||
-                    frameEnc->m_lowres.bScenecut)
-                {
-                    int32_t noiseScore = estimate_noise(frameEnc);
-                    m_param->isFilterThisGOP = (noiseScore >= 50000) ? 1 : 0;
-                }
-            //if (isFilterThisframe(frameEnc->m_mcstf->m_sliceTypeConfig, frameEnc->m_lowres.sliceType))
-            if (m_param->isFilterThisGOP && isFilterThisframe(frameEnc->m_mcstf->m_sliceTypeConfig, frameEnc->m_lowres.sliceType))
+            /* Noise gate: re-evaluate at every GOP boundary (IDR/I/scenecut).
+             * m_filterThisGOP persists across batches so B/P frames that arrive
+             * before the next I-frame inherit the previous GOP's decision. */
+            if (frameEnc->m_lowres.sliceType == X265_TYPE_IDR ||
+                frameEnc->m_lowres.sliceType == X265_TYPE_I   ||
+                frameEnc->m_lowres.bScenecut)
+            {
+                m_filterThisGOP = (estimate_noise(frameEnc) >= 50000);
+            }
+            /* Stamp the per-frame flag so frameencoder reads a race-free value */
+            frameEnc->m_lowres.filterThisGOP = m_filterThisGOP;
+
+            if (frameEnc->m_lowres.filterThisGOP && isFilterThisframe(frameEnc->m_mcstf->m_sliceTypeConfig, frameEnc->m_lowres.sliceType))
             {
                 if (!generatemcstf(frameEnc, m_origPicBuf->m_mcstfPicList, m_inputQueue.last()->m_poc))
                 {
