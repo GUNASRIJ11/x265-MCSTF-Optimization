@@ -2243,7 +2243,7 @@ void Lookahead::slicetypeDecide()
                 {
                     int32_t score = estimate_noise(frameEnc);
                     frameEnc->m_lowres.noiseScore = score;
-                    m_filterThisGOP = (score >= 50000);
+                    m_filterThisGOP = (score >= NOISE_THRESHOLD);
                 }
             }
             else

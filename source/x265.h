@@ -652,6 +652,7 @@ typedef enum
 #define X265_MAX_GOP_CONFIG 3
 #define X265_MAX_GOP_LENGTH 16
 #define MAX_T_LAYERS 7
+#define NOISE_THRESHOLD         40000
 
 #if ENABLE_MULTIVIEW
 #define MAX_VIEWS 2
