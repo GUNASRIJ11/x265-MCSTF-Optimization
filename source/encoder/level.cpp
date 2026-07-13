@@ -76,7 +76,7 @@ void determineLevel(const x265_param &param, VPS& vps)
      * for intra-only profiles (vps.ptl.intraConstraintFlag) */
     vps.ptl.lowerBitRateConstraintFlag = true;
 
-    vps.maxTempSubLayers = !!param.bEnableTemporalSubLayers ? param.bEnableTemporalSubLayers : 1;
+    vps.maxTempSubLayers = !!param.bEnableTemporalSubLayers ? param.bEnableTemporalSubLayers : 5;
     
     if (param.internalCsp == X265_CSP_I420 && param.internalBitDepth <= 10)
     {
@@ -343,14 +343,14 @@ void determineLevel(const x265_param &param, VPS& vps)
  * circumstances it will be quite noisy */
 bool enforceLevel(x265_param& param, VPS& vps)
 {
-    vps.maxTempSubLayers = !!param.bEnableTemporalSubLayers ? param.bEnableTemporalSubLayers : 1;
+    vps.maxTempSubLayers = !!param.bEnableTemporalSubLayers ? param.bEnableTemporalSubLayers : 5;
     for (uint32_t i = 0; i < vps.maxTempSubLayers; i++)
     {
         vps.numReorderPics[i] = (i == 0) ? ((param.bBPyramid && param.bframes > 1) ? 2 : !!param.bframes) : i;
         vps.maxDecPicBuffering[i] = X265_MIN(MAX_NUM_REF, X265_MAX(vps.numReorderPics[i] + 2, (uint32_t)param.maxNumReferences) + 1) + !!param.bEnableSCC;
     }
 
-    if (!!param.bEnableTemporalSubLayers)
+    if (!param.bEnableTemporalSubLayers)
     {
         for (int i = 0; i < MAX_T_LAYERS - 1; i++)
         {
