@@ -2040,7 +2040,7 @@ int Encoder::encode(const x265_picture* pic_in, x265_picture* pic_out)
                     pic_out[sLayer].bitDepth = X265_DEPTH;
                     pic_out[sLayer].userData = outFrame->m_userData;
                     pic_out[sLayer].colorSpace = m_param->internalCsp;
-                    pic_out[sLayer].frameData.tLayer = outFrame->m_tempLayer;
+                    pic_out[sLayer].frameData.tLayer = m_param->bEnableTemporalSubLayers ? outFrame->m_tempLayer : 0;
                     pic_out[sLayer].layerID = sLayer;
                     frameData = &(pic_out[sLayer].frameData);
 
