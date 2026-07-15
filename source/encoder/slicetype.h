@@ -160,7 +160,7 @@ public:
     x265_param*   m_param;
     Lowres*       m_lastNonB;
     int*          m_scratch;         // temp buffer for cutree propagate
-    pixel*        m_noiseBlurBuf;    // persistent blur buffer for estimate_noise() fallback path
+    pixel*        m_noiseBlurBuf;    // persistent blur buffer for estimateNoise() fallback path
     bool          m_filterThisGOP;  // noise gate decision for the GOP currently being dispatched
 
     /* pre-lookahead */
@@ -235,7 +235,7 @@ public:
     int     findSliceType(int poc);
     bool    generatemcstf(Frame * frame, PicList refPic, int poclast);
     bool    isFilterThisframe(uint8_t sliceTypeConfig, int curSliceType);
-    int32_t estimate_noise(Frame* curFrame);
+    int32_t estimateNoise(Frame* curFrame);
 
 
 protected:

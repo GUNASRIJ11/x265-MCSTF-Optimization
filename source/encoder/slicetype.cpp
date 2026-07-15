@@ -970,7 +970,7 @@ void LookaheadTLD::weightsAnalyse(Lowres& fenc, Lowres& ref)
     }
 }
 
-int32_t Lookahead::estimate_noise(Frame* curFrame)
+int32_t Lookahead::estimateNoise(Frame* curFrame)
 {
     int      width  = curFrame->m_fencPic->m_picWidth;
     int      height = curFrame->m_fencPic->m_picHeight;
@@ -2241,7 +2241,7 @@ void Lookahead::slicetypeDecide()
                     frameEnc->m_lowres.sliceType == X265_TYPE_I   ||
                     frameEnc->m_lowres.bScenecut)
                 {
-                    int32_t score = estimate_noise(frameEnc);
+                    int32_t score = estimateNoise(frameEnc);
                     frameEnc->m_lowres.noiseScore = score;
                     m_filterThisGOP = (score >= NOISE_THRESHOLD);
                 }
