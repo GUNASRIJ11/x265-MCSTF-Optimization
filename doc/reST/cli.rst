@@ -1374,6 +1374,15 @@ Temporal / motion search options
 	at the cost of increased memory usage and processing time. The valid range is 1 to 4.
 	Default: 2
 
+.. option:: --selective-mcstf, --no-selective-mcstf
+
+	Gate MCSTF with a per-GOP noise estimate: skip the filter for GOPs whose
+	starting I/IDR frame (or scenecut) is estimated as clean (low noise), and
+	apply it only where it helps. Has no effect unless :option:`--mcstf` is
+	enabled. When :option:`--csv-log-level` is 2 or higher, adds a Frame Noise
+	and IsMCSTFEnabled column to the per-frame CSV log.
+	Default: disabled
+
 Spatial/intra options
 =====================
 
