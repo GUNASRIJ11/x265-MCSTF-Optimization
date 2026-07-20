@@ -3311,6 +3311,12 @@ void Encoder::finishFrameStats(Frame* curFrame, FrameEncoder *curEncoder, x265_f
             frameStats->currTrQP = curFrame->m_targetQp;
         }
 
+        if (m_param->bSelectiveMCSTF && m_param->csvLogLevel >= 2)
+        {
+            frameStats->frameNoise     = curFrame->m_lowres.noiseScore;
+            frameStats->isMCSTFEnabled = curFrame->m_lowres.filterThisGOP ? 1 : 0;
+        }
+
         if (m_param->csvLogLevel >= 1)
         {
             frameStats->cuStats.percentIntraNxN = curFrame->m_encData->m_frameStats.percentIntraNxN;
